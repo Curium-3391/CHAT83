@@ -177,8 +177,9 @@ class ConversationEngine:
         req = decode_fetch(request)
         self.drain()
         if req.start >= self.total():
-            # History may have changed while user is browsing; send full sync.
-            return self.sync()
+            # Never send a SEQ=0 RESET to a client waiting for this F seq.
+            # Such a mismatch must be reported, not silently accepted.
+            raise ValueError("fetch range beyond SQLite history; resync required")
         return self.packet(req.start, req.count, seq=req.seq)
 
     def update(self, start: int):
