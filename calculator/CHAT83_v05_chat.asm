@@ -1436,25 +1436,45 @@ input_send:
     ld a,(busy_flag)
     or a
     ret nz                 ; preserve composed text until model is idle
+
+    ; Build a complete checksum-protected question BEFORE touching Link port.
+    ; Q + LEN + ASCII(1..48) + LATEST + CRC8(poly 07)
+    ld a,'Q'
+    ld (question_wire),a
+    ld a,(input_len)
+    ld (question_wire+1),a
+    ld c,a
+    ld b,0
+    ld hl,input_buf
+    ld de,question_wire+2
+    ldir
+    ld a,(page_flags)
+    and 2
+    jr nz,question_not_latest
+    ld a,1
+    jr question_latest_set
+question_not_latest:
+    xor a
+question_latest_set:
+    ld (de),a
+    inc de                  ; DE = CRC destination
+    xor a
+    ld (crc_state),a
+    ld hl,question_wire
+    ld a,(input_len)
+    add a,3                 ; header 2 + latest 1
+    ld b,a
+    call crc8_buffer
+    ld a,(crc_state)
+    ld (de),a
+
     xor a
     ld (input_mode),a
     call disable_rx
-    ld a,'Q'
-    bcall(_SendAByte)
+    ld hl,question_wire
     ld a,(input_len)
-    bcall(_SendAByte)
-    ld hl,input_buf
-    ld a,(input_len)
+    add a,4                 ; Q LEN TEXT LATEST CRC8
     call send_bytes
-    ld a,(page_flags)
-    and 2
-    jr nz,input_not_latest
-    ld a,1
-    jr input_latest_ready
-input_not_latest:
-    xor a
-input_latest_ready:
-    bcall(_SendAByte)
     ld a,'Q'
     ld (request_kind),a
     call reset_receiver_state
@@ -1699,6 +1719,11 @@ input_line:     .db "            ",0
 alpha_mode:     .db 0
 retry_wire:     .db 0,0,0
 cancel_wire:    .db 0,0
+question_wire:
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
 idle_ticks:     .dw 0
 repeat_ticks:   .dw 0
 pending_scroll: .db 0
