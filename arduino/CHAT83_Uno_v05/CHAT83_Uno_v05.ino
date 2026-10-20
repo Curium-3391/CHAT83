@@ -32,6 +32,10 @@ static const uint8_t MAX_TX = 16;
 static const uint8_t MAX_WIRE = 36;
 static const uint32_t BIT_TIMEOUT_US = 50000UL;
 static const uint32_t RX_TIMEOUT_US = 30000UL;
+// Allow pullups and the cable capacitance to settle after releasing our ACK.
+// Without this phase IDLE can accidentally read our own dying-low ACK edge
+// as a new calculator-start bit.
+static const uint32_t RX_ACK_SETTLE_US = 100UL;
 
 static uint8_t wireIn[MAX_WIRE];
 static uint8_t wireUsed = 0;
@@ -52,8 +56,16 @@ static uint32_t deadlineFrom = 0;
 static uint32_t lastByteAt = 0;
 static uint8_t gapMs = 35; // initially conservative; PC can set via G
 static bool sendPending = false;
-enum LinkState : uint8_t { IDLE, RX_WAIT_RELEASE, TX_WAIT_ACK, TX_WAIT_RELEASE };
+enum LinkState : uint8_t { IDLE, RX_WAIT_RELEASE, RX_ACK_SETTLE, TX_WAIT_ACK, TX_WAIT_RELEASE };
 static LinkState state = IDLE;
+
+// Diagnostic counters are collected without Serial.print inside the handshake.
+// Enabled on demand with USB 'D',1, and reported in nonblocking 'J' frames.
+static bool debugLink = false;
+static uint16_t rxStarts = 0, rxAckedBits = 0, rxDoneBytes = 0;
+static uint16_t rxTimeouts = 0, txTimeouts = 0;
+static uint8_t rxLastByte = 0;
+static uint32_t debugLastMillis = 0;
 
 static uint8_t crc8(const uint8_t *data, uint8_t n) {
   uint8_t crc = 0;
@@ -127,15 +139,34 @@ static void deliverCalcByte(uint8_t byte) {
   }
 }
 static void flushCalcQueue() {
-  // A 'R'+byte UART packet takes only 5 bytes with COBS/CRC. Never enter
-  // Serial.write() while its USB serial TX buffer is full and the calculator
-  // might already be handshaking the next bit.
+  // UART output must never block the bit-level TI Link handshake.
   if (calcUsed && Serial.availableForWrite() >= 8) {
     const uint8_t msg[] = {'R', calcQueue[calcHead]};
     sendPacket(msg, 2);
     calcHead = (uint8_t)((calcHead + 1) & 63);
     --calcUsed;
   }
+}
+
+// [J,start_lo,hi, ack_lo,hi, bytes_lo,hi, rx_err_lo,hi, tx_err_lo,hi,
+//  state, line_flags, last_byte]. All numeric values are snapshots.
+static void flushLinkDiagnostics() {
+  if (!debugLink || (uint32_t)(millis() - debugLastMillis) < 500UL ||
+      Serial.availableForWrite() < 24) return;
+  debugLastMillis = millis();
+  const uint8_t levels =
+      (digitalRead(TIP) == HIGH ? 1 : 0) |
+      (digitalRead(RING) == HIGH ? 2 : 0);
+  const uint8_t msg[] = {
+      'J',
+      (uint8_t)rxStarts, (uint8_t)(rxStarts >> 8),
+      (uint8_t)rxAckedBits, (uint8_t)(rxAckedBits >> 8),
+      (uint8_t)rxDoneBytes, (uint8_t)(rxDoneBytes >> 8),
+      (uint8_t)rxTimeouts, (uint8_t)(rxTimeouts >> 8),
+      (uint8_t)txTimeouts, (uint8_t)(txTimeouts >> 8),
+      (uint8_t)state, levels, rxLastByte
+  };
+  sendPacket(msg, sizeof(msg));
 }
 
 // Decode COBS input (without delimiter) in place.
@@ -163,6 +194,10 @@ static void handleHost(uint8_t *raw, uint8_t count) {
     sendPacket(msg, 4);
   } else if (type == 'G' && count == 3 && raw[1] >= 2 && raw[1] <= 50) {
     gapMs = raw[1];
+    ack(0, 0);
+  } else if (type == 'D' && count == 3 && raw[1] <= 1) {
+    debugLink = raw[1] != 0;
+    debugLastMillis = millis();
     ack(0, 0);
   } else if (type == 'T' && count >= 5 && count == (uint8_t)(4 + raw[2]) &&
              raw[2] > 0 && raw[2] <= MAX_TX) {
@@ -204,6 +239,7 @@ static void pollHost() {
 }
 
 static void finishSend(uint8_t status) {
+  if (status != 0) ++txTimeouts;
   releaseLine(TIP);
   releaseLine(RING);
   state = IDLE;
@@ -225,21 +261,35 @@ static void startTxBit() {
 static void pollLink() {
   if (state == RX_WAIT_RELEASE) {
     if (digitalRead(peerLine) == HIGH) {
+      // TI released the bit-start wire; release the ACK we drove LOW.
       releaseLine(lineDriven);
-      state = IDLE;
+      ++rxAckedBits;
       ++bitIndex;
       if (bitIndex == 8) {
         bitIndex = 0;
+        rxLastByte = rxByte;
+        ++rxDoneBytes;
         deliverCalcByte(rxByte);
         rxByte = 0;
       }
+      // Explicit idle guard: don't interpret our own ACK line still
+      // rising to HIGH through the pullup as another START bit.
+      deadlineFrom = micros();
+      state = RX_ACK_SETTLE;
     } else if (elapsed(deadlineFrom, RX_TIMEOUT_US)) {
+      ++rxTimeouts;
       releaseLine(lineDriven);
-      state = IDLE;
+      state = RX_ACK_SETTLE;
+      deadlineFrom = micros();
       bitIndex = 0;
       rxByte = 0;
+      // Error reporting is serviced after the physical ACK was released.
       errorEvent(5);
     }
+    return;
+  }
+  if (state == RX_ACK_SETTLE) {
+    if (elapsed(deadlineFrom, RX_ACK_SETTLE_US)) state = IDLE;
     return;
   }
   if (state == TX_WAIT_ACK) {
@@ -278,6 +328,7 @@ static void pollLink() {
     rxByte = (uint8_t)((rxByte >> 1) | (bit ? 0x80 : 0));
     peerLine = bit ? RING : TIP;
     lineDriven = bit ? TIP : RING;
+    ++rxStarts;
     pullLow(lineDriven);
     deadlineFrom = micros();
     state = RX_WAIT_RELEASE;
@@ -302,4 +353,5 @@ void loop() {
   pollLink();        // Highest priority: open-drain bit handshake.
   pollHost();        // Read at most eight UART bytes per loop.
   flushCalcQueue();  // Asynchronous TI-to-PC delivery, never block on USB.
+  flushLinkDiagnostics();
 }
