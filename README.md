@@ -54,29 +54,27 @@ Controls: **ENTER** submits a request (and starts the next one when viewing the 
 
 The original Arduino sketch provides byte-level transport, not delivery acknowledgment or retries. Do not assume data integrity from the presence of a PC log alone. See [protocol details](docs/protocol.md) for limitations and timing.
 
-## Experimental v0.3: Remote History
+## Experimental v0.3.1: Remote History + Cursors
 
-**v0.3 is assembled and CI-tested but has NOT been tested on the actual TI-83 Plus yet.** It is on branch `feat/remote-history-v03` so that the proven v0.2 in `main` remains untouched.
+This is a **hardware-untested refinement** of v0.3 on branch `feat/remote-history-v03`. The old v0.3 was reported working on real TI-83 Plus hardware (SYNC, HELLO, DEMO). v0.3.1 adds:
 
-- Calculator source: `calculator/CHAT83_v03_remote.asm`
-- PC source: `bridge/bridge_v03.py`
-- Protocol and packet layout: [v0.3 remote history](docs/protocol-v03.md)
-- GitHub Actions produces a downloadable experimental `CHAT83.8xp` artifact.
+- A `>` history cursor at the right of the currently selected row.
+- A steady `_` text-entry cursor, which follows typing and DEL.
+- Server-provided **older/newer boundary flags** so pressing UP at the oldest record or DOWN at the newest record no longer starts a pointless ~10-second transfer.
+- A new four-byte page header: `P COUNT VIEW FLAGS`. **Old v0.3 binaries and Python bridge are NOT wire-compatible with this refinement.**
 
-Build the Z80 application with SPASM-ng as **CHAT83** and transfer it by TiLP, or get the experimental `.8xp` from the passing CI run. **Close TiLP** before starting the Python bridge. Install Python dependencies via `py -m pip install -r bridge/requirements.txt`, then start:
+Relevant files: `calculator/CHAT83_v03_remote.asm`, `bridge/bridge_v03.py`, [protocol details](docs/protocol-v03.md). The CI workflow builds a downloadable experimental `CHAT83.8xp` artifact.
+
+To test, first install v0.3.1 `CHAT83.8xp` with TiLP, close TiLP, and replace the old local Python file with the v0.3.1 `bridge_v03.py` before launching:
 
 ```powershell
+py -m pip install -r bridge/requirements.txt
 py bridge/bridge_v03.py --port COM2
 ```
 
-Start `Asm(prgmCHAT83)` on the calculator after Python says it is listening. Expect a delay while the 24-row cache loads.
+On the calculator run `Asm(prgmCHAT83)`, send `HELLO` and `DEMO`, then scroll UP to the oldest record and press UP a few more times. The PC log should show no extra `OLDER` request at the global beginning. Scroll to the newest record and verify no redundant `NEWER` request. The `>` and `_` cursors should track navigation and typing.
 
-- In history: **UP/DOWN** scroll (automatically fetch remote pages); **ENTER** opens input; **CLEAR** exits.
-- In input: **ALPHA** for letters, digits and SPACE; **DEL** erases; **ENTER** sends; **CLEAR** returns to history.
-- Try `HELLO`, `PING` and `DEMO`. `DEMO` intentionally generates more than 24 lines to exercise remote paging.
-- All messages are kept in `bridge/chat83.sqlite3` on Windows (gitignored). Restarting both programs should fetch recent history again.
-
-This is **not yet an LLM client**. v0.3 uses canned test answers. Never pair the v0.2 calculator program with the v0.3 Python bridge or vice versa; their wire protocols differ.
+Persistent conversations are stored in a gitignored `chat83.sqlite3` file beside the Python script. The SQLite schema is unchanged; the existing database from v0.3 can be reused. The LLM connection is still planned, **not yet implemented**.
 
 ## Roadmap
 
