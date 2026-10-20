@@ -6,6 +6,7 @@
 // RX_ACK_SETTLE state the Uno can accidentally read its own ACK as the next
 // TI bit, despite successful PC/Uno USB handshake.
 #include "Arduino.h"
+#include <initializer_list>
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
