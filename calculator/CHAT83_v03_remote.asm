@@ -5,9 +5,10 @@
 .org userMem - 2
 .db t2ByteTok, tAsmCmp
 
-; CHAT83 v0.3.1 experimental remote history terminal
+; CHAT83 v0.3.2 experimental remote history terminal
 ; 'S' sync; 'O' older; 'N' newer; 'Q'+LEN+ASCII question.
 ; Page = 'P'+COUNT+VIEW+FLAGS+COUNT*12 ASCII bytes.
+; Delta = 'D'+COUNT+FLAGS+COUNT*12; append into 24-row cache.
 ; FLAGS bit 0: older records exist; bit 1: newer records exist.
 ; Cache: 24 rows * 13 bytes (12 chars and terminator).
 
@@ -232,6 +233,8 @@ show_wait:
 
 recv_page:
     bcall(_RecAByteIO)
+    cp 'D'
+    jp z,recv_delta
     cp 'P'
     jp nz,bad_page
     bcall(_RecAByteIO)
@@ -260,12 +263,20 @@ row_loop:
     ld a,(line_count)
     cp b
     jr z,page_done
+    call recv_cache_row
+    ld a,(row_index)
+    inc a
+    ld (row_index),a
+    jr row_loop
+
+; Read 12 bytes into cache[row_index], then add a NUL terminator.
+recv_cache_row:
     ld a,(row_index)
     call row_addr
     ld (ptr),hl
     ld a,12
     ld (remaining),a
-byte_loop:
+read_byte_loop:
     bcall(_RecAByteIO)
     cp 32
     jr nc,check_ascii_high
@@ -282,13 +293,11 @@ write_byte:
     ld a,(remaining)
     dec a
     ld (remaining),a
-    jr nz,byte_loop
+    jr nz,read_byte_loop
     ld hl,(ptr)
     ld (hl),0
-    ld a,(row_index)
-    inc a
-    ld (row_index),a
-    jr row_loop
+    ret
+
 page_done:
     ld a,(request_kind)
     cp 'O'
@@ -317,6 +326,90 @@ select_top:
 show_new_page:
     call draw_history
     jp history_keys
+
+; D packet is only allowed in response to a question.
+; Keep the latest min(old_count,24-delta_count) cached rows,
+; move them to the front, then append the new rows.
+recv_delta:
+    ld a,(request_kind)
+    cp 'Q'
+    jp nz,bad_page
+    bcall(_RecAByteIO)
+    or a
+    jp z,bad_page
+    cp 25
+    jp nc,bad_page
+    ld (delta_count),a
+    bcall(_RecAByteIO)
+    cp 2                       ; delta has only OLDER_EXISTS bit
+    jp nc,bad_page
+    ld (page_flags),a
+
+    ; available old slots = 24 - appended rows
+    ld a,(delta_count)
+    ld b,a
+    ld a,24
+    sub b
+    ld b,a
+    ld a,(line_count)
+    cp b
+    jr c,keep_old_count
+    ld a,b
+keep_old_count:
+    ld (kept_count),a
+    ld b,a
+    ld a,(line_count)
+    sub b
+    ld (drop_count),a
+    or a
+    jr z,no_shift
+    ld a,(kept_count)
+    or a
+    jr z,no_shift
+
+    ; Copy old rows forward in memory. Destination < source.
+    ld a,(drop_count)
+    call row_addr
+    ld de,history_cache
+    ld a,(kept_count)
+shift_rows:
+    push af
+    ld bc,13
+    ldir
+    pop af
+    dec a
+    jr nz,shift_rows
+
+no_shift:
+    xor a
+    ld (delta_index),a
+    ld a,(kept_count)
+    ld (row_index),a
+delta_row_loop:
+    call recv_cache_row
+    ld a,(row_index)
+    inc a
+    ld (row_index),a
+    ld a,(delta_index)
+    inc a
+    ld (delta_index),a
+    ld b,a
+    ld a,(delta_count)
+    cp b
+    jr nz,delta_row_loop
+
+    ; New cached count and bottom-aligned viewport.
+    ld a,(row_index)
+    ld (line_count),a
+    cp 7
+    jr c,delta_small
+    sub 6
+    jr delta_view
+delta_small:
+    xor a
+delta_view:
+    ld (view_start),a
+    jp page_done
 
 bad_page:
     bcall(_ClrLCDFull)
@@ -404,7 +497,7 @@ no_history_cursor:
     ld (draw_row),a
     jr draw_loop
 
-history_title: .db "CHAT83 V0.3.1",0
+history_title: .db "CHAT83 V0.3.2",0
 history_help:  .db "ENTER:ASK",0
 ask_title:     .db "CHAT83 INPUT",0
 ask_label:     .db "YOU:",0
@@ -419,6 +512,10 @@ view_start:    .db 0
 cursor_row:    .db 0
 page_flags:    .db 0
 request_kind:  .db 0
+delta_count:   .db 0
+delta_index:   .db 0
+kept_count:    .db 0
+drop_count:    .db 0
 row_index:     .db 0
 remaining:     .db 0
 draw_index:    .db 0

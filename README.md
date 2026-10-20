@@ -76,6 +76,18 @@ On the calculator run `Asm(prgmCHAT83)`, send `HELLO` and `DEMO`, then scroll UP
 
 Persistent conversations are stored in a gitignored `chat83.sqlite3` file beside the Python script. The SQLite schema is unchanged; the existing database from v0.3 can be reused. The LLM connection is still planned, **not yet implemented**.
 
+## Experimental v0.3.2: Fast incremental replies
+
+The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating an approximately 10-second wait for even `HELLO`. v0.3.2 changes this when the user is on the newest page:
+
+- Python sends a `D COUNT FLAGS ROWS` **delta** containing only new text rows.
+- Z80 shifts existing cached rows as needed and appends the new ones.
+- A two-row `HELLO` / `WORLD` exchange now requires only 27 return bytes (previously 292 when history was full).
+- Requests from an older page, or answers spanning more than 24 lines, still use the original full `P` page; history `SYNC`, `OLDER` and `NEWER` are also unchanged.
+- The `chat83.sqlite3` database schema and history persist unchanged.
+
+**Both sides must use v0.3.2.** Update the calculator from `calculator/CHAT83_v03_remote.asm` and PC from `bridge/bridge_v03.py` from the same revision, then test after closing TiLP. The new protocol extension is documented in [protocol-v03.md](docs/protocol-v03.md). Experimental until real-device testing passes.
+
 ## Roadmap
 
 - Verify the history/scrolling prototype against SPASM-ng and real TI-83 Plus hardware.

@@ -1,4 +1,4 @@
-"""CHAT83 v0.3.1 experimental PC bridge with persistent remote history.
+"""CHAT83 v0.3.2 experimental PC bridge with persistent remote history.
 
 No LLM API in this release. Python 3.9+ and pyserial required.
 """
@@ -126,10 +126,25 @@ class Conversation:
         new_start = min(last_start, old_start + PAGE_STEP)
         return self._page(new_start, old_start + PAGE_STEP + 1 - new_start)
 
-    def ask(self, question: str) -> tuple[int, list[str], int]:
+    def ask(self, question: str) -> bytes:
+        """Return only new lines when the calculator is on the latest page.
+
+        The calculator appends a 'D' packet to its cached rows, dropping the
+        oldest rows if its 24-line cache is full. A full 'P' page is used when
+        asking from an older page or for a response longer than the cache.
+        """
+        previous_total = self.total_lines()
+        was_latest_page = self.page_start == max(0, previous_total - PAGE_SIZE)
+        answer = demo_reply(question)
+        additions = text_rows("user", question) + text_rows("assistant", answer)
         save_message(self.db, "user", question)
-        save_message(self.db, "assistant", demo_reply(question))
-        return self.sync()
+        save_message(self.db, "assistant", answer)
+
+        if was_latest_page and 0 < len(additions) <= PAGE_SIZE:
+            total = self.total_lines()
+            self.page_start = max(0, total - PAGE_SIZE)
+            return encode_delta(additions, older_exists=total > PAGE_SIZE)
+        return encode_page(self.sync())
 
 
 def encode_page(page: tuple[int, list[str], int]) -> bytes:
@@ -144,6 +159,16 @@ def encode_page(page: tuple[int, list[str], int]) -> bytes:
     if any(len(row) != ROW_WIDTH for row in chunks):
         raise ValueError("all display rows must be exactly 12 bytes")
     return b"P" + bytes([len(rows), viewport, flags]) + b"".join(chunks)
+
+
+def encode_delta(rows: list[str], older_exists: bool) -> bytes:
+    """Delta response: 'D', count, flags, 12-byte rows; no whole-page resend."""
+    if not 1 <= len(rows) <= PAGE_SIZE:
+        raise ValueError("delta row count must be 1..24")
+    chunks = [row.encode("ascii", "replace") for row in rows]
+    if any(len(row) != ROW_WIDTH for row in chunks):
+        raise ValueError("delta rows must be exactly 12 bytes")
+    return b"D" + bytes([len(rows), int(older_exists)]) + b"".join(chunks)
 
 
 def paced_write(ser, packet: bytes, delay: float) -> None:
@@ -174,7 +199,7 @@ def handle_command(ser, conversation: Conversation, command: bytes,
         if any(not 32 <= value <= 126 for value in raw):
             raise ValueError("non-printable ASCII request; restart required")
         question = raw.decode("ascii")
-        packet = encode_page(conversation.ask(question))
+        packet = conversation.ask(question)
         description = f"Q {question!r}"
     else:
         raise ValueError(f"unknown command 0x{command.hex()}; restart required")
@@ -182,11 +207,13 @@ def handle_command(ser, conversation: Conversation, command: bytes,
     # Brief time for the Z80 client to enter _RecAByteIO.
     time.sleep(0.15)
     paced_write(ser, packet, delay)
-    return f"{description} -> {packet[1]} rows, view={packet[2]}, flags={packet[3]}"
+    if packet[0] == ord("D"):
+        return f"{description} -> DELTA {packet[1]} rows, flags={packet[2]}, {len(packet)} bytes"
+    return f"{description} -> PAGE {packet[1]} rows, view={packet[2]}, flags={packet[3]}, {len(packet)} bytes"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CHAT83 v0.3.1 persistent history bridge")
+    parser = argparse.ArgumentParser(description="CHAT83 v0.3.2 persistent history bridge")
     parser.add_argument("--port", default="COM2", help="Arduino USB serial port")
     parser.add_argument("--baud", type=int, default=9600)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -200,7 +227,7 @@ def main() -> None:
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with db_connect(args.db) as db:
         conversation = Conversation(db)
-        print(f"CHAT83 v0.3.1 EXPERIMENTAL | COM={args.port} | DB={args.db}")
+        print(f"CHAT83 v0.3.2 EXPERIMENTAL | COM={args.port} | DB={args.db}")
         with serial.Serial(args.port, args.baud, timeout=5,
                            write_timeout=5) as ser:
             time.sleep(2.5)  # Uno resets after opening COM
