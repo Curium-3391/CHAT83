@@ -208,6 +208,7 @@ class ConversationEngine:
         context = self._messages_for_llm()
         self.worker = Thread(target=self._run_generation, args=(context,), daemon=True)
         self.worker.start()
+        self.drain()
         count = self.total() - initial_total
         if at_latest and 0 < count <= MAX_ROWS:
             return self.packet(initial_total, count)
@@ -254,14 +255,38 @@ class ConversationEngine:
         raise ValueError(f"unknown command {first!r}")
 
 
-def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False):
+def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False,
+          adaptive: bool = False):
+    """Main thread owns UART and SQLite. Implicit next requests confirm receipt.
+
+    Adaptive pacing is conservative: with eight successful full exchanges,
+    reduce only 2 ms at a time to a 12 ms floor. On an application CRC retry,
+    slow by 5 ms (50 ms maximum) and reset the success streak. A byte lost
+    at the physical level may never produce a reply, so this is not a
+    substitute for packet timeouts and hardware verification.
+    """
     print("Listening for TI-83 Plus. Run Asm(prgmC83V5). Ctrl+C exits.", flush=True)
+    streak = 0
     while True:
         incoming = link.read(1)
         if not incoming:
             engine.drain()
             continue
         packet, label, is_retry = engine.dispatch(link, incoming)
+        if adaptive:
+            if is_retry:
+                streak = 0
+                target = min(50, link.gap_ms + 5)
+                if target != link.gap_ms:
+                    link.set_gap(target)
+                    print(f"CRC retry -> slowing Uno to {target} ms/byte")
+            else:
+                streak += 1
+                if streak >= 8 and link.gap_ms > 12:
+                    target = max(12, link.gap_ms - 2)
+                    link.set_gap(target)
+                    print(f"8 successful requests -> Uno gap now {target} ms/byte")
+                    streak = 0
         if not is_retry:
             engine.last_reply = packet
             engine.retry_count = 0
@@ -282,6 +307,8 @@ def main():
                     help="Uno inter-byte Link gap (2..50 ms; first hardware test keep 35)")
     ap.add_argument("--max-context-chars", type=int, default=8000)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="experimental rate tuning; enable only after baseline hardware validation")
     args = ap.parse_args()
     if not 2 <= args.gap_ms <= 50:
         ap.error("--gap-ms must be 2..50")
@@ -301,7 +328,7 @@ def main():
             link.connect()  # refuses to run with upstream serial2ti83 firmware.
             print(f"CHAT83 Uno v0.5 handshake OK; gap {args.gap_ms}ms")
             try:
-                serve(link, engine, verbose=args.verbose)
+                serve(link, engine, verbose=args.verbose, adaptive=args.adaptive)
             finally:
                 print(f"Uno link statistics: {link.stats()}")
 
