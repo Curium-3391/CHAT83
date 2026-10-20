@@ -6,7 +6,7 @@ Original TI-83 Plus only for the matching RX-assist client.
 TI requests:
  S                              recent up-to-six rows, RESET response
  F SEQ DIR START:u32 COUNT XOR   bounded speculative fetch, one outstanding
- Q LEN TEXT                     new conversation entry; delta if <=6 lines
+ Q LEN TEXT LATEST(0/1)         new conversation entry; delta if possible
 
 PC replies:
  C SEQ START:u32 COUNT FLAGS 12*COUNT ASCII XOR
@@ -67,13 +67,13 @@ class Server:
             raise ValueError("out-of-range fetch")
         return self.packet(req.start, req.count, sequence=req.sequence)
 
-    def ask(self, question):
+    def ask(self, question, at_latest=True):
         old_total = self.total()
         reply = demo_reply(question)
         new_rows = text_rows("user", question) + text_rows("assistant", reply)
         save_message(self.db, "user", question)
         save_message(self.db, "assistant", reply)
-        if len(new_rows) <= LOOKAHEAD:
+        if at_latest and len(new_rows) <= LOOKAHEAD:
             return self.packet(old_total, len(new_rows))
         # A very long answer cannot fit in the six-row staging buffer.
         return self.sync()
@@ -94,7 +94,10 @@ def decode_one(ser, first, server):
         if any(not 32 <= b <= 126 for b in raw):
             raise ValueError("non-ASCII input")
         question = raw.decode("ascii")
-        return server.ask(question), f"Q {question!r}"
+        latest = read_exact(ser, 1)[0]
+        if latest not in (0, 1):
+            raise ValueError("bad calculator latest-page indicator")
+        return server.ask(question, bool(latest)), f"Q {question!r}"
     raise ValueError(f"bad command {first.hex()}")
 
 
