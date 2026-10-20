@@ -48,7 +48,7 @@ class OpenAIProvider:
         client = OpenAI(timeout=90, max_retries=2)
         input_items = [{"role": m["role"], "content": m["content"]} for m in messages]
         events = client.responses.create(model=self.model, input=input_items, stream=True,
-                                         instructions=DEFAULT_SYSTEM)
+                                         instructions=DEFAULT_SYSTEM, store=False)
         for event in events:
             if event.type == "response.output_text.delta":
                 yield event.delta
