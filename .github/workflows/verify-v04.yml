@@ -1,0 +1,38 @@
+name: Verify v0.4 cooperative link prototype
+on:
+  push:
+    branches: [feat/v04-cooperative-link]
+  pull_request:
+    paths:
+      - "calculator/CHAT83_v04_rx_probe.asm"
+      - "bridge/probe_v04.py"
+      - "bridge/prefetch_v04.py"
+      - "tests/test_v04.py"
+      - ".github/workflows/verify-v04.yml"
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check v0.3 regression and v0.4 predictor tests
+        run: PYTHONPATH=bridge python -m unittest discover -s tests -v
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SPASM-ng
+        run: |
+          git clone --depth 1 https://github.com/alberthdev/spasm-ng.git spasm-ng
+          make -C spasm-ng NO_APPSIGN=1 -j2
+      - name: Assemble v0.4 hardware receive probe
+        run: |
+          mkdir -p build
+          ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v04_rx_probe.asm build/C83RX.8xp
+          test -s build/C83RX.8xp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v04-RX-LAB-TI83Plus-8xp
+          path: build/C83RX.8xp
