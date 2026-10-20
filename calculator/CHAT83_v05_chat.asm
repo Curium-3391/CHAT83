@@ -1027,7 +1027,11 @@ send_update:
 input_screen:
     xor a
     ld (input_len),a
+    ld (input_cursor),a
     ld (input_buf),a
+    ld a,1
+    ld (input_mode),a
+    ld (alpha_mode),a
     bcall(_ClrLCDFull)
     bcall(_HomeUp)
     ld hl,ask_title
@@ -1037,72 +1041,160 @@ input_screen:
     ld hl,ask_label
     bcall(_PutS)
     call draw_input
-input_keys:
-    bcall(_GetKey)
-    cp kClear
-    jr z,input_cancel
-    cp kEnter
+    ret
+
+; Nonblocking GetCSC editor: ALPHA toggles letters/numbers, 2nd inserts a
+; space, LEFT/RIGHT move insertion point, DEL backspaces, ENTER submits.
+; Four 12-character editor lines: up to 48 ASCII characters.
+input_key:
+    cp skClear
+    jp z,input_cancel
+    cp skEnter
     jp z,input_send
-    cp kDel
+    cp skDel
     jp z,input_delete
-    cp kSpace
+    cp skLeft
+    jp z,input_left
+    cp skRight
+    jp z,input_right
+    cp skAlpha
+    jp z,input_toggle
+    cp sk2nd
+    jp z,input_space
+    ld (scan_key),a
+    ld b,a
+    ld a,(alpha_mode)
+    or a
+    jr z,input_numeric
+    ld a,b
+    cp sk0
     jr z,input_space
-    cp kCapA
-    jr c,input_number
-    cp kCapZ+1
-    jr nc,input_keys
-    sub kCapA-'A'
+    ld hl,alpha_pairs
+    ld b,26
+    jr input_lookup
+input_numeric:
+    ld a,b
+    ld hl,numeric_pairs
+    ld b,19
+input_lookup:
+    cp (hl)
+    jr z,input_pair_found
+    inc hl
+    inc hl
+    djnz input_lookup
+    ret
+input_pair_found:
+    inc hl
+    ld a,(hl)
     jp input_append
-input_number:
-    cp k0
-    jr c,input_keys
-    cp k9+1
-    jr nc,input_keys
-    sub k0-'0'
-    jp input_append
+
+input_toggle:
+    ld a,(alpha_mode)
+    xor 1
+    ld (alpha_mode),a
+    call draw_input
+    ret
 input_space:
     ld a,' '
-input_append:
-    ld c,a
+    jp input_append
+input_left:
+    ld a,(input_cursor)
+    or a
+    ret z
+    dec a
+    ld (input_cursor),a
+    call draw_input
+    ret
+input_right:
+    ld a,(input_cursor)
+    ld b,a
     ld a,(input_len)
-    cp 12
-    jr nc,input_keys
+    cp b
+    ret z
+    ld a,b
+    inc a
+    ld (input_cursor),a
+    call draw_input
+    ret
+
+input_append:
+    ld (temp_char),a
+    ld a,(input_len)
+    cp MAX_INPUT
+    ret nc
+    ld b,a
+    ld a,(input_cursor)
+    ld c,a
+    ld a,b
+    sub c
+    inc a                  ; shift terminator as well
+    ld c,a
+    ld b,0
+    ld hl,input_buf
+    ld a,(input_len)
     ld e,a
     ld d,0
+    add hl,de               ; HL = terminator
+    ld d,h
+    ld e,l
+    inc de                  ; DE = one byte later
+    lddr
     ld hl,input_buf
+    ld a,(input_cursor)
+    ld e,a
+    ld d,0
     add hl,de
-    ld a,c
+    ld a,(temp_char)
     ld (hl),a
-    inc hl
-    ld (hl),0
+    ld a,(input_cursor)
+    inc a
+    ld (input_cursor),a
     ld a,(input_len)
     inc a
     ld (input_len),a
     call draw_input
-    jp input_keys
+    ret
 
 input_delete:
-    ld a,(input_len)
+    ld a,(input_cursor)
     or a
-    jp z,input_keys
+    ret z
     dec a
-    ld (input_len),a
+    ld (input_cursor),a
     ld e,a
     ld d,0
     ld hl,input_buf
-    add hl,de
-    ld (hl),0
+    add hl,de               ; HL points to destination
+    ld d,h
+    ld e,l
+    inc hl                  ; source is one byte after cursor-1
+    ld a,(input_len)
+    ld b,a
+    ld a,(input_cursor)
+    ld c,a
+    ld a,b
+    sub c                   ; copy (len - newcursor) including terminator
+    ld c,a
+    ld b,0
+    ldir
+    ld a,(input_len)
+    dec a
+    ld (input_len),a
     call draw_input
-    jp input_keys
+    ret
 
 input_cancel:
+    xor a
+    ld (input_mode),a
     call draw_history
     ret
 
 input_send:
     ld a,(input_len)
     or a
-    jp z,input_keys
+    ret z
+    xor a
+    ld (input_mode),a
     call disable_rx
     ld a,'Q'
     bcall(_SendAByte)
@@ -1119,28 +1211,99 @@ input_send:
 input_not_latest:
     xor a
 input_latest_ready:
-    bcall(_SendAByte)     ; at latest page? prevents bad delta concatenation
+    bcall(_SendAByte)
     ld a,'Q'
     ld (request_kind),a
     call reset_receiver_state
     call enable_rx
-    call draw_loading
+    call draw_history
     ret
 
 draw_input:
     ld a,3
-    call set_row
-    ld hl,blank13
-    bcall(_PutS)
-    ld a,3
-    call set_row
+    ld (editor_row),a
+    xor a
+    ld (editor_offset),a
+input_draw_loop:
     ld hl,input_buf
+    ld a,(editor_offset)
+    ld e,a
+    ld d,0
+    add hl,de
+    ld de,input_line
+    ld b,12
+input_line_copy:
+    ld a,(hl)
+    or a
+    jr nz,input_copy_printable
+    ld a,' '
+input_copy_printable:
+    ld (de),a
+    inc hl
+    inc de
+    djnz input_line_copy
+    xor a
+    ld (de),a
+    ld a,(editor_row)
+    call set_row
+    ld hl,input_line
     bcall(_PutS)
-    ld a,(input_len)
+    ld a,(editor_offset)
+    add a,12
+    ld (editor_offset),a
+    ld a,(editor_row)
+    inc a
+    ld (editor_row),a
+    cp 7
+    jr c,input_draw_loop
+    ; Cursor index 48 is drawn in the spare 13th column of row 6.
+    ld a,(input_cursor)
+    ld b,3
+input_cursor_div:
+    cp 12
+    jr c,input_cursor_position
+    sub 12
+    inc b
+    ld c,a
+    ld a,b
+    cp 7
+    ld a,c
+    jr c,input_cursor_div
+    ld a,12
+    ld b,6
+input_cursor_position:
     ld (curCol),a
+    ld a,b
+    ld (curRow),a
     ld a,'_'
     bcall(_PutC)
+    ld a,7
+    call set_row
+    ld a,(alpha_mode)
+    or a
+    jr z,input_show_numbers
+    ld hl,alpha_label
+    bcall(_PutS)
     ret
+input_show_numbers:
+    ld hl,number_label
+    bcall(_PutS)
+    ret
+
+; Physical TI-83+ ALPHA legend positions via GetCSC scan codes.
+alpha_pairs:
+    .db skMath,'A',skMatrix,'B',skPrgm,'C',skVars,'D'
+    .db skRecip,'E',skSin,'F',skCos,'G',skTan,'H',skPower,'I'
+    .db skSquare,'J',skComma,'K',skLParen,'L',skRParen,'M',skDiv,'N'
+    .db skLog,'O',skLn,'P',skStore,'Q'
+    .db sk7,'R',sk8,'S',sk9,'T',skMul,'U'
+    .db sk4,'V',sk5,'W',sk6,'X',sk1,'Y',sk2,'Z'
+numeric_pairs:
+    .db sk0,'0',sk1,'1',sk2,'2',sk3,'3',sk4,'4'
+    .db sk5,'5',sk6,'6',sk7,'7',sk8,'8',sk9,'9'
+    .db skDecPnt,'.',skChs,'-',skAdd,'+',skSub,'-'
+    .db skMul,'*',skDiv,'/',skLParen,'(',skRParen,')'
+    .db skComma,','
 
 ; ---- text UI ----------------------------------------------------------
 set_row:
@@ -1253,6 +1416,8 @@ live_label:     .db "AI",0
 err_label:      .db "ERR",0
 ask_title:      .db "CHAT83 INPUT",0
 ask_label:      .db "YOU:",0
+alpha_label:    .db "ALPHA ON",0
+number_label:   .db "NUMBERS ",0
 blank13:        .db "             ",0
 
 ; ---- RAM state; explicit storage for old calculators / SPASM-ng ------
@@ -1282,6 +1447,11 @@ poll_timer:     .dw 0
 retry_count:    .db 0
 input_mode:     .db 0
 input_cursor:   .db 0
+scan_key:       .db 0
+temp_char:      .db 0
+editor_row:     .db 0
+editor_offset:  .db 0
+input_line:     .db "            ",0
 alpha_mode:     .db 0
 retry_wire:     .db 0,0,0
 update_wire:    .db 0,0,0,0,0,0
@@ -1293,6 +1463,9 @@ draw_index:     .db 0
 draw_row:       .db 0
 input_len:      .db 0
 input_buf:      .db 0,0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0
+    .db 0,0,0,0,0,0,0,0,0,0,0,0
 send_ptr:       .dw 0
 send_left:      .db 0
 fetch_start:    .db 0,0,0,0
