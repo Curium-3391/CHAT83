@@ -86,7 +86,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_page_flag_encoding(self):
         packet = encode_page((0, ["TEST".ljust(12)], 3))
-        self.assertEqual(packet[:4], b"P\\x01\\x00\\x03")
+        self.assertEqual(packet[:4], bytes([80, 1, 0, 3]))
         self.assertEqual(len(packet), 16)
         with self.assertRaises(ValueError):
             encode_page((0, [], 4))
