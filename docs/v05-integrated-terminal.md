@@ -139,6 +139,53 @@ TI 端使用短 `U` 查詢拉取新行，不接收未要求的資料。中文／
   位元丟失導致無法判斷封包邊界時，可能仍需 MODE 或兩端重啟。
 - USB/Arduino 協定互不相容舊版；雙方必須一同更新。
 
+## 已知硬體問題：USB 已連線，但計算機顯示 ERR:LINK
+
+**2026-10-21 實機觀察：** 使用者的 COM2 (USB-SERIAL CH340) 已成功出現
+`CHAT83 Uno v0.5 handshake OK`、`Listening for TI-83 Plus`，
+但 TI 執行 `Asm(prgmC83V5)` 後顯示原廠 ROM 的
+`ERR:LINK / 1:Quit / 2:Goto`，PC 沒有出現 `SYNC`。
+這是 **PC↔Uno USB 已確認、Uno↔TI Link 尚未驗證** 的狀況。
+不要因為 Python 的 USB handshake OK 就宣稱整條電纜正常。
+
+此候選版已新增 **Uno RX_ACK_SETTLE** 狀態：接收一個 bit 並釋放 ACK 後，
+暫時等待線路經弱上拉回升，避免把自己的 ACK 殘留低電位誤讀成下一個 bit。
+這是根據原始碼分析的可疑原因修正，並加入 60µs 線路延遲的
+C++ 原韌體模擬回歸測試；**尚未有實機驗證它確實解決問題**。
+
+如果已傳入 C83V5.8xp，只需**更新 Uno 韌體 + Python**
+（`CHAT83_Uno_v05.ino`、`usb_v05.py`、`bridge_v05.py`）；
+不需要再次開 TiLP 傳送相同的 C83V5.8xp。
+
+1. 在 PowerShell 按 Ctrl+C，關閉 Arduino Serial Monitor。
+2. 拔下計算機的 Link 插頭，將套件中更新後的
+   `CHAT83_Uno_v05.ino` 使用 Arduino IDE 重新上傳，之後把 Link
+   插頭接回原 D2/TIP、D3/RING、GND 接線。
+3. 使用**新版** `bridge_v05.py` 搭配 `usb_v05.py`，用原本
+   COM2 啟動：
+
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider demo --gap-ms 35 --debug-link
+   ```
+
+4. 等到顯示 `handshake OK`、`[UNO-DIAG] enabled`、
+   `Listening`，再在 TI-83 Plus 執行 `Asm(prgmC83V5)`。
+5. 將 `[UNO-DIAG]`、`SYNC`、`LINK ERROR` 或 TI ERR 畫面
+   的輸出回報。診斷每約半秒輸出一次：
+
+   ```text
+   [UNO-DIAG] start=8 ack=8 rx_bytes=1 rx_to=0 tx_to=0 state=0 TIP=H RING=H last_rx=0x53
+   ```
+
+   上面是**成功接收到 'S' 的示例，不是實測結果**。
+   `start` 表示偵測到低電位的次數、`ack` 是完成位元握手次數，
+   `rx_bytes` 是收到完整 byte 的次數；`TIP/RING` 是取樣狀態。
+   `0x53` 就是 ASCII `S`。
+
+**注意：** 線路仍有問題時，可能只出現
+`start=0 ack=0 rx_bytes=0`，或在某一個 bit 卡住。
+最終仍須實機驗收，不能只依賴模擬測試。
+
 ## 一次性完整硬體驗收表
 
 請**先安裝整套，再照順序在同一次工作階段測完**。不要在步驟中更換
