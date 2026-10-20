@@ -5,9 +5,10 @@
 .org userMem - 2
 .db t2ByteTok, tAsmCmp
 
-; CHAT83 v0.3 experimental remote history terminal
+; CHAT83 v0.3.1 experimental remote history terminal
 ; 'S' sync; 'O' older; 'N' newer; 'Q'+LEN+ASCII question.
-; Page response = 'P'+COUNT+VIEW+COUNT*12 ASCII bytes.
+; Page = 'P'+COUNT+VIEW+FLAGS+COUNT*12 ASCII bytes.
+; FLAGS bit 0: older records exist; bit 1: newer records exist.
 ; Cache: 24 rows * 13 bytes (12 chars and terminator).
 
 start:
@@ -16,7 +17,10 @@ start:
     ld (input_buf),a
     ld (line_count),a
     ld (view_start),a
+    ld (page_flags),a
+    ld (cursor_row),a
     ld a,'S'
+    ld (request_kind),a
     bcall(_SendAByte)
     jp recv_page
 
@@ -33,34 +37,65 @@ history_keys:
     jr history_keys
 
 scroll_up:
+    ld a,(line_count)
+    or a
+    jp z,history_keys
+    ld a,(cursor_row)
+    or a
+    jr z,up_edge
+    dec a
+    ld (cursor_row),a
+    call draw_history
+    jp history_keys
+up_edge:
     ld a,(view_start)
     or a
-    jr z,request_older
+    jr z,up_remote
     dec a
     ld (view_start),a
     call draw_history
     jp history_keys
-request_older:
+up_remote:
+    ld a,(page_flags)
+    and 1
+    jp z,history_keys       ; no older history: DO NOT retransmit
     ld a,'O'
+    ld (request_kind),a
     bcall(_SendAByte)
     jp recv_page
 
 scroll_down:
     ld a,(line_count)
-    cp 6
-    jr c,request_newer
-    jr z,request_newer
-    sub 6
-    ld b,a
+    or a
+    jp z,history_keys
     ld a,(view_start)
+    ld b,a
+    ld a,(cursor_row)
+    add a,b
+    inc a                    ; next absolute cached line
+    ld b,a
+    ld a,(line_count)
     cp b
-    jr nc,request_newer
+    jr z,down_remote
+    ld a,(cursor_row)
+    cp 5
+    jr z,down_shift
+    inc a
+    ld (cursor_row),a
+    call draw_history
+    jp history_keys
+down_shift:
+    ld a,(view_start)
     inc a
     ld (view_start),a
     call draw_history
     jp history_keys
-request_newer:
+down_remote:
+    ld a,(page_flags)
+    and 2
+    jp z,history_keys       ; latest line: no needless PC request
     ld a,'N'
+    ld (request_kind),a
     bcall(_SendAByte)
     jp recv_page
 
@@ -147,7 +182,7 @@ draw_input:
     ld (curRow),a
     xor a
     ld (curCol),a
-    ld hl,blank12
+    ld hl,blank13
     bcall(_PutS)
     ld a,3
     ld (curRow),a
@@ -155,6 +190,10 @@ draw_input:
     ld (curCol),a
     ld hl,input_buf
     bcall(_PutS)
+    ld a,(input_len)
+    ld (curCol),a
+    ld a,'_'
+    bcall(_PutC)             ; visible, steady input caret
     ret
 
 send_question:
@@ -162,6 +201,7 @@ send_question:
     or a
     jp z,input_keys
     ld a,'Q'
+    ld (request_kind),a
     bcall(_SendAByte)
     ld a,(input_len)
     bcall(_SendAByte)
@@ -200,6 +240,10 @@ recv_page:
     ld (line_count),a
     bcall(_RecAByteIO)
     ld (view_start),a
+    bcall(_RecAByteIO)       ; paging flags in v0.3.1 header
+    cp 4
+    jp nc,bad_page
+    ld (page_flags),a
     ld a,(line_count)
     or a
     jr z,empty_page
@@ -246,6 +290,31 @@ write_byte:
     ld (row_index),a
     jr row_loop
 page_done:
+    ld a,(request_kind)
+    cp 'O'
+    jr z,select_top
+    cp 'N'
+    jr z,select_top
+    ; SYNC and ASK: select the newest visible row
+    ld a,(line_count)
+    or a
+    jr z,select_top
+    dec a
+    ld b,a
+    ld a,(view_start)
+    ld c,a
+    ld a,b
+    sub c
+    cp 6
+    jr c,select_end
+    ld a,5
+select_end:
+    ld (cursor_row),a
+    jr show_new_page
+select_top:
+    xor a
+    ld (cursor_row),a
+show_new_page:
     call draw_history
     jp history_keys
 
@@ -314,6 +383,19 @@ draw_loop:
     xor a
     ld (curCol),a
     bcall(_PutS)
+    ld a,(draw_row)
+    dec a
+    ld b,a
+    ld a,(cursor_row)
+    cp b
+    jr nz,no_history_cursor
+    ld a,(draw_row)
+    ld (curRow),a
+    ld a,14
+    ld (curCol),a
+    ld a,'>'
+    bcall(_PutC)
+no_history_cursor:
     ld a,(draw_index)
     inc a
     ld (draw_index),a
@@ -322,18 +404,21 @@ draw_loop:
     ld (draw_row),a
     jr draw_loop
 
-history_title: .db "CHAT83 V0.3",0
+history_title: .db "CHAT83 V0.3.1",0
 history_help:  .db "ENTER:ASK",0
 ask_title:     .db "CHAT83 INPUT",0
 ask_label:     .db "YOU:",0
 waiting:       .db "WAIT FOR PC",0
 error_msg:     .db "PAGE ERROR",0
 none_msg:      .db "NO HISTORY",0
-blank12:       .db "            ",0
+blank13:       .db "             ",0
 input_len:     .db 0
 input_buf:     .db 0,0,0,0,0,0,0,0,0,0,0,0,0
 line_count:    .db 0
 view_start:    .db 0
+cursor_row:    .db 0
+page_flags:    .db 0
+request_kind:  .db 0
 row_index:     .db 0
 remaining:     .db 0
 draw_index:    .db 0
