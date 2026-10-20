@@ -154,3 +154,14 @@ ACK, rolling checksum stronger than XOR, debouncing and smoothing.
 
 **Do not merge the integrated v0.4 client to main until this device smoke test
 and longer stress tests pass.**
+
+
+## v0.4 follow-up: 48-line ring to reduce refetch thrashing
+
+After a successful real-device demonstration of the integrated chat client, the user reported that fast scrolling sometimes runs ahead of available rows. Their PC log showed repeated `FETCH OLDER @0 (6)` and `FETCH NEWER @24 (6)` during back-and-forth navigation. With the original 24-line ring, switching direction can evict rows that need to be fetched again.
+
+This branch now uses **48×13 = 624 bytes** of Z80 active cache, rather than 24×13 = 312 bytes. The six-line staging frame remains at most 81 bytes, and the host's 55 ms/byte default is unchanged. The Python ring-reference model and its test assertions have been updated to a matching 48-row capacity.
+
+Why this helps: the trial conversation is approximately 30 visible rows, so once loaded it can fit in the entire 48-row cache. That should eliminate repeated `@0` ⇄ `@24` fetches for the same history, **without re-downloading rows when switching directions**. This is an expected improvement, not yet confirmed on device for the enlarged build.
+
+What this **does not** solve: a six-row cold fetch is still 81 bytes × 55 ms = **4.455 seconds minimum from the fixed PC pacing**, and a user can outrun remote data. The long-term target remains a receiver-credit/ACK protocol with safe adaptive pacing, explicit unavailable-row indication, and measured input latency while TX/RX is active. Reducing pace blindly may corrupt bytes on the Uno/TI Link connection.
