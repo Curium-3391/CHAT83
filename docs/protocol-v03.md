@@ -44,3 +44,27 @@ Full page size: 292 bytes. Arduino serial pacing is currently 35 ms per byte, so
 ## Limitations
 
 This remains a local canned-reply demonstration, not an LLM integration. The ROM link routines are blocking; no ACK, CRC, retransmission, stream recovery, Unicode, or blinking text caret yet. The Python database (`chat83.sqlite3`) may contain private messages and must remain outside Git.
+
+## v0.3.2 fast-reply extension (experimental)
+
+The 24-line cache is **retained after each question** when already viewing the newest page. The PC returns only newly added rows rather than resending a full page.
+
+### Delta packet — PC to TI
+
+```text
+byte 0      ASCII 'D' (0x44)
+byte 1      COUNT (1..24 new rows)
+byte 2      FLAGS (bit 0: older history exists; bit 1 always 0)
+bytes 3..   COUNT × 12 ASCII bytes (space padded)
+```
+
+For `HELLO` → `WORLD`, only **27 bytes** are returned (`D`, count 2, flags 0 or 1, and 24 characters), instead of 292 bytes for an already-full page. At the default 35 ms per-byte pacing, the artificial wait falls from about **10.2 seconds to 0.95 seconds**, excluding handshaking and other overhead.
+
+The Z80 program evicts just enough oldest cached rows to fit the new rows and then positions the viewing window at the latest message. SQLite still stores the entire conversation. The delta response only applies when:
+
+- The previous cached page already held the **newest** history, and
+- The new question + answer fit in at most 24 display rows.
+
+If either condition is false, the PC returns the original `P COUNT VIEW FLAGS DATA` full page (about 10 seconds when full). `S`, `O` and `N` still use full pages for now.
+
+**Compatibility warning:** v0.3.2 Z80 and Python must be used together. v0.3.1 Python cannot respond to `D`, and v0.3.1 Z80 doesn't recognize it. Both should be upgraded at once. Database schema is unchanged and old `.sqlite3` data remain usable. This is not yet tested on physical TI-83 Plus hardware.
