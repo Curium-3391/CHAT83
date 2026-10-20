@@ -76,10 +76,10 @@ main_loop:
 loop_plan:
     ld a,(input_mode)
     or a
-    jr nz,no_background
+    jr nz,loop_live
     call maybe_prefetch
+loop_live:
     call poll_live
-no_background:
     jp main_loop
 
 exit_program:
@@ -622,6 +622,9 @@ apply_flags_draw:
     ld (page_flags),a
     xor a
     ld (request_kind),a
+    ld a,(input_mode)
+    or a
+    ret nz                 ; do not overwrite editor while streaming
     call draw_history
     ret
 apply_flags_nodraw:
@@ -807,9 +810,7 @@ send_cancel:
     ret
 
 request_input:
-    ld a,(busy_flag)
-    or a
-    ret nz                 ; Only one model response may be active.
+    ; May edit during an existing LLM stream, but cannot send yet.
     ld a,1
     ld (pending_enter),a
     ret
@@ -1289,6 +1290,9 @@ input_send:
     ld a,(input_len)
     or a
     ret z
+    ld a,(busy_flag)
+    or a
+    ret nz                 ; preserve composed text until model is idle
     xor a
     ld (input_mode),a
     call disable_rx
