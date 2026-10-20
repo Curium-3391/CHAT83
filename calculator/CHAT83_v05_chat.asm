@@ -787,9 +787,9 @@ history_not_error:
     cp skMode
     jp z,maybe_cancel_model
     cp skUp
-    jr z,key_up
+    jp z,key_up
     cp skDown
-    jr z,key_down
+    jp z,key_down
     ret
 request_exit:
     ld a,1
