@@ -1,0 +1,62 @@
+name: Verify CHAT83 v0.5 integrated terminal
+on:
+  push:
+    branches: [feat/v05-integrated-terminal]
+  pull_request:
+    paths:
+      - "arduino/CHAT83_Uno_v05/**"
+      - "calculator/CHAT83_v05_chat.asm"
+      - "bridge/bridge_v05.py"
+      - "bridge/protocol_v05.py"
+      - "bridge/usb_v05.py"
+      - "bridge/providers_v05.py"
+      - "tests/**"
+      - ".github/workflows/verify-v05.yml"
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check syntax
+        run: python -m compileall -q bridge tests
+      - name: Full regression plus v0.5 transport and LLM tests
+        run: PYTHONPATH=bridge python -m unittest discover -s tests -v
+  uno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install Arduino Uno AVR core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+      - name: Compile nonblocking Arduino Uno firmware
+        run: |
+          arduino-cli compile --fqbn arduino:avr:uno \
+            --output-dir build/uno arduino/CHAT83_Uno_v05
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-uno-firmware
+          path: |
+            build/uno/*.hex
+            build/uno/*.elf
+  z80:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SPASM-ng
+        run: |
+          git clone --depth 1 https://github.com/alberthdev/spasm-ng.git spasm-ng
+          make -C spasm-ng NO_APPSIGN=1 -j2
+      - name: Assemble full interactive client
+        run: |
+          mkdir -p build
+          ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v05_chat.asm build/C83V5.8xp
+          test -s build/C83V5.8xp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-calculator-8xp
+          path: build/C83V5.8xp
