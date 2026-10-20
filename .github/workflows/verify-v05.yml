@@ -60,3 +60,35 @@ jobs:
         with:
           name: CHAT83-v05-calculator-8xp
           path: build/C83V5.8xp
+
+  package:
+    needs: [python, uno, z80]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHAT83-v05-uno-firmware
+          path: artifacts/uno
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHAT83-v05-calculator-8xp
+          path: artifacts/z80
+      - name: Build single Windows hardware test kit
+        run: |
+          mkdir -p build/CHAT83-v05-Windows
+          cp artifacts/z80/C83V5.8xp build/CHAT83-v05-Windows/
+          cp artifacts/uno/*.hex build/CHAT83-v05-Windows/
+          cp arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino build/CHAT83-v05-Windows/
+          cp bridge/bridge_v03.py bridge/bridge_v05.py \
+            bridge/protocol_v05.py bridge/usb_v05.py \
+            bridge/providers_v05.py bridge/prefetch_v05.py \
+            bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
+          cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
+          cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          test -s build/CHAT83-v05-Windows/C83V5.8xp
+          test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-Windows-complete-test-kit
+          path: build/CHAT83-v05-Windows/
