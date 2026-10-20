@@ -42,7 +42,7 @@ class BridgeTests(unittest.TestCase):
         with patch("bridge_v03.time.sleep"):
             status = handle_command(ser, self.conversation, b"Q", 0)
         self.assertIn("2 rows", status)
-        self.assertEqual(ser.outgoing[:3], b"P\x02\x00\x00")
+        self.assertEqual(ser.outgoing[:4], b"P\x02\x00\x00")
         self.assertEqual(len(ser.outgoing), 4 + 2 * ROW_WIDTH)
         self.assertIn(b"WORLD", ser.outgoing)
         roles = self.db.execute("SELECT role FROM messages ORDER BY id").fetchall()
