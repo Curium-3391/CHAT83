@@ -733,7 +733,33 @@ poll_keys:
     ld b,a
     ld a,(last_key)
     cp b
+    jr nz,key_new_press
+    ld a,b
+    cp skUp
+    jr z,key_repeat
+    cp skDown
+    jr z,key_repeat
+    ld a,(input_mode)
+    or a
     ret z
+    ld a,b
+    cp skLeft
+    jr z,key_repeat
+    cp skRight
+    jr z,key_repeat
+    cp skDel
+    ret nz
+key_repeat:
+    ld hl,(repeat_ticks)
+    inc hl
+    ld (repeat_ticks),hl
+    ld a,h
+    cp 4                  ; repeat only after sustained hold
+    ret c
+key_new_press:
+    xor a
+    ld (repeat_ticks),a
+    ld (repeat_ticks+1),a
     ld a,b
     ld (last_key),a
     ld a,(input_mode)
@@ -823,6 +849,10 @@ key_up:
     ld a,(cursor_off)
     or a
     ret z
+    ld (prior_cursor),a
+    ld a,(view_off)
+    ld (prior_view),a
+    ld a,(cursor_off)
     dec a
     ld (cursor_off),a
     ld b,a
@@ -833,7 +863,7 @@ key_up:
     dec a
     ld (view_off),a
 up_redraw:
-    call draw_history
+    call cursor_refresh
     ret
 key_down:
     ld a,1
@@ -846,6 +876,12 @@ key_down:
     inc a
     cp b
     ret nc
+    ld a,(cursor_off)
+    ld (prior_cursor),a
+    ld a,(view_off)
+    ld (prior_view),a
+    ld a,(cursor_off)
+    inc a
     ld (cursor_off),a
     ld b,a
     ld a,(view_off)
@@ -853,13 +889,41 @@ key_down:
     cp b
     jr z,down_view
     jr c,down_view
-    call draw_history
+    call cursor_refresh
     ret
 down_view:
     ld a,(view_off)
     inc a
     ld (view_off),a
-    call draw_history
+    call cursor_refresh
+    ret
+
+; Dirty cursor updates: only repaint two '>' positions when viewport stays
+; unchanged. Full six-row repaint is required only when viewport scrolls.
+cursor_refresh:
+    ld a,(view_off)
+    ld b,a
+    ld a,(prior_view)
+    cp b
+    jp nz,draw_history
+    ld a,(prior_cursor)
+    sub b
+    inc a
+    ld (curRow),a
+    ld a,14
+    ld (curCol),a
+    ld a,' '
+    bcall(_PutC)
+    ld a,(view_off)
+    ld b,a
+    ld a,(cursor_off)
+    sub b
+    inc a
+    ld (curRow),a
+    ld a,14
+    ld (curCol),a
+    ld a,'>'
+    bcall(_PutC)
     ret
 
 maybe_prefetch:
@@ -1557,6 +1621,8 @@ retry_wire:     .db 0,0,0
 cancel_wire:    .db 0,0
 idle_ticks:     .dw 0
 repeat_ticks:   .dw 0
+prior_cursor:   .db 0
+prior_view:     .db 0
 update_wire:    .db 0,0,0,0,0,0
 sequence:       .db 0
 expect_seq:     .db 0
