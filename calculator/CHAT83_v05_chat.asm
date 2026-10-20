@@ -33,6 +33,7 @@ start:
     ld (page_flags),a
     ld (last_key),a
     ld (pending_enter),a
+    ld (pending_cancel),a
     ld (error_flag),a
     ld (exit_flag),a
     ld (sequence),a
@@ -76,6 +77,19 @@ main_loop:
     ld (pending_enter),a
     call input_screen
 loop_plan:
+    ld a,(pending_cancel)
+    or a
+    jr z,loop_check_prefetch
+    ld a,(request_kind)
+    or a
+    jr nz,loop_check_prefetch
+    xor a
+    ld (pending_cancel),a
+    ld a,(busy_flag)
+    or a
+    jr z,loop_check_prefetch
+    call send_cancel
+loop_check_prefetch:
     ld a,(input_mode)
     or a
     jr nz,loop_live
@@ -804,7 +818,14 @@ maybe_cancel_model:
     ld a,(busy_flag)
     or a
     ret z
-    jp send_cancel
+    ld a,(request_kind)
+    or a
+    jp z,send_cancel
+    ; Never send K during a six-row PC reply: request/response streams
+    ; would collide. Defer until the in-flight C frame is committed.
+    ld a,1
+    ld (pending_cancel),a
+    ret
 
 restart_sync:
     xor a
@@ -1651,6 +1672,7 @@ error_flag:     .db 0
 exit_flag:      .db 0
 last_key:       .db 0
 pending_enter:  .db 0
+pending_cancel: .db 0
 cache_head:     .db 0
 cache_count:    .db 0
 cache_start:    .db 0,0,0,0
