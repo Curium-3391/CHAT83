@@ -597,6 +597,7 @@ apply_fetch_flags:
     ld (page_flags),a
     xor a
     ld (request_kind),a
+    call replay_scroll
     ret
 apply_newer_flags:
     ; Fetching NEWER: retain existing older boundary and set older if head
@@ -613,6 +614,7 @@ apply_newer_flags:
     ld (page_flags),a
     xor a
     ld (request_kind),a
+    call replay_scroll
     ret
 
 apply_flags_draw:
@@ -841,6 +843,12 @@ request_input:
     ld (pending_enter),a
     ret
 key_up:
+    ld a,(direction)
+    cp 0FFh
+    jr z,up_dir_ready
+    xor a
+    ld (pending_scroll),a
+up_dir_ready:
     ld a,0FFh
     ld (direction),a
     ld a,(cache_count)
@@ -848,7 +856,7 @@ key_up:
     ret z
     ld a,(cursor_off)
     or a
-    ret z
+    jp z,queue_older_key
     ld (prior_cursor),a
     ld a,(view_off)
     ld (prior_view),a
@@ -865,7 +873,19 @@ key_up:
 up_redraw:
     call cursor_refresh
     ret
+queue_older_key:
+    ld a,(page_flags)
+    and 1
+    ret z
+    jp queue_scroll
+
 key_down:
+    ld a,(direction)
+    cp 1
+    jr z,down_dir_ready
+    xor a
+    ld (pending_scroll),a
+down_dir_ready:
     ld a,1
     ld (direction),a
     ld a,(cache_count)
@@ -875,7 +895,7 @@ key_down:
     ld a,(cursor_off)
     inc a
     cp b
-    ret nc
+    jp nc,queue_newer_key
     ld a,(cursor_off)
     ld (prior_cursor),a
     ld a,(view_off)
@@ -896,6 +916,42 @@ down_view:
     inc a
     ld (view_off),a
     call cursor_refresh
+    ret
+queue_newer_key:
+    ld a,(page_flags)
+    and 2
+    ret z
+    jp queue_scroll
+
+queue_scroll:
+    ld a,(pending_scroll)
+    cp 12
+    ret nc
+    inc a
+    ld (pending_scroll),a
+    ret
+
+; Call only once after one six-row prefetch has committed. Extra key presses
+; at an unloaded boundary are preserved and replayed against newly added rows.
+replay_scroll:
+    ld a,(pending_scroll)
+    or a
+    ret z
+    ld b,a
+    xor a
+    ld (pending_scroll),a
+scroll_replay_loop:
+    push bc
+    ld a,(direction)
+    cp 0FFh
+    jr nz,replay_newer
+    call key_up
+    jr replay_next
+replay_newer:
+    call key_down
+replay_next:
+    pop bc
+    djnz scroll_replay_loop
     ret
 
 ; Dirty cursor updates: only repaint two '>' positions when viewport stays
@@ -1621,6 +1677,7 @@ retry_wire:     .db 0,0,0
 cancel_wire:    .db 0,0
 idle_ticks:     .dw 0
 repeat_ticks:   .dw 0
+pending_scroll: .db 0
 prior_cursor:   .db 0
 prior_view:     .db 0
 update_wire:    .db 0,0,0,0,0,0
