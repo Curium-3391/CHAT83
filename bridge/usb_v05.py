@@ -157,10 +157,17 @@ class UnoUsb:
         packet = self._wait_for(b"H")
         if len(packet) != 4 or tuple(packet[1:3]) != (0, 5) or packet[3] < MAX_BATCH:
             raise LinkFailure(f"not CHAT83 v0.5 Uno firmware: {packet!r}")
-        self._send(bytes([ord("G"), self.gap_ms]))
+        self.set_gap(self.gap_ms)
+
+    def set_gap(self, gap_ms: int):
+        """Change the real inter-byte gap without reflashing Uno firmware."""
+        if not 2 <= gap_ms <= 50:
+            raise ValueError("gap_ms must be 2..50")
+        self._send(bytes([ord("G"), gap_ms]))
         ack = self._wait_for(b"A", seq=0)
         if len(ack) != 3 or ack[2] != 0:
             raise LinkFailure(f"Uno rejected gap setting: {ack!r}")
+        self.gap_ms = gap_ms
 
     def read(self, size: int = 1) -> bytes:
         if size <= 0:
