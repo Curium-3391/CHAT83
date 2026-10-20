@@ -245,6 +245,9 @@ class ConversationEngine:
                 raise ValueError("bad question length")
             raw = read_exact(ser, length)
             latest = read_exact(ser, 1)[0]
+            check = read_exact(ser, 1)[0]
+            if crc8(b"Q" + bytes([length]) + raw + bytes([latest, check])):
+                raise ValueError("bad Q frame CRC8; question NOT stored")
             if latest not in (0, 1) or any(not 32 <= x <= 126 for x in raw):
                 raise ValueError("invalid question")
             question = raw.decode("ascii")
