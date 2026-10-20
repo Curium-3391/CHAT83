@@ -5,6 +5,9 @@ on:
   pull_request:
     paths:
       - "calculator/CHAT83_v04_rx_probe.asm"
+      - "calculator/CHAT83_v04_chat.asm"
+      - "bridge/bridge_v04.py"
+      - "tests/test_bridge_v04.py"
       - "bridge/probe_v04.py"
       - "bridge/prefetch_v04.py"
       - "tests/test_v04.py"
@@ -32,7 +35,13 @@ jobs:
           mkdir -p build
           ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v04_rx_probe.asm build/C83RX.8xp
           test -s build/C83RX.8xp
+      - name: Assemble experimental v0.4 interactive chat client
+        run: |
+          ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v04_chat.asm build/C83V4.8xp
+          test -s build/C83V4.8xp
       - uses: actions/upload-artifact@v4
         with:
           name: CHAT83-v04-RX-LAB-TI83Plus-8xp
-          path: build/C83RX.8xp
+          path: |
+            build/C83RX.8xp
+            build/C83V4.8xp
