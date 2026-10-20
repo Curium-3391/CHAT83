@@ -3,7 +3,7 @@
 Fetch: U32 absolute offsets, CRC8 instead of v0.4 XOR.
     S                  sync to latest six rows
     F SEQ DIR START4 COUNT CRC8  -> 9 bytes
-    Q LEN ASCII LATEST  request text and delta safety
+    Q LEN ASCII LATEST CRC8  request text and delta safety
     U START4 CRC8      poll newest live rows (6 bytes)
     R SEQ CRC8         request retransmit of last response (3 bytes)
     K CRC8             cancel current LLM generation
