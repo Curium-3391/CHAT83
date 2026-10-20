@@ -952,6 +952,9 @@ queue_scroll:
     ret nc
     inc a
     ld (pending_scroll),a
+    cp 1
+    ret nz
+    call draw_load_status
     ret
 
 ; Call only once after one six-row prefetch has committed. Extra key presses
@@ -975,6 +978,20 @@ replay_newer:
 replay_next:
     pop bc
     djnz scroll_replay_loop
+    call draw_history
+    ld a,(pending_scroll)
+    or a
+    ret z
+    call draw_load_status
+    ret
+
+draw_load_status:
+    ld a,7
+    call set_row
+    ld a,9
+    ld (curCol),a
+    ld hl,load_label
+    bcall(_PutS)
     ret
 
 ; Dirty cursor updates: only repaint two '>' positions when viewport stays
@@ -1675,6 +1692,7 @@ error_text:     .db "LINK ERROR",0
 exit_help:      .db "CLEAR: EXIT",0
 empty_text:     .db "NO HISTORY",0
 history_help:   .db "ENTER:ASK",0
+load_label:     .db "LOADING",0
 live_label:     .db "AI",0
 err_label:      .db "ERR",0
 ask_title:      .db "CHAT83 INPUT",0
