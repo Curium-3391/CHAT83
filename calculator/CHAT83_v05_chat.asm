@@ -23,6 +23,8 @@ start:
     xor a
     out (00h),a
     ld (rx_pos),a
+    ld (crc_state),a
+    ld (rx_expected),a
     ld (request_kind),a
     ld (cache_head),a
     ld (cache_count),a
