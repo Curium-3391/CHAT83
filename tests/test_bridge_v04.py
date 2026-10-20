@@ -41,7 +41,7 @@ class BridgeV04Tests(unittest.TestCase):
         save_message(self.db, "user", "ONE")
         packet = self.server.sync()
         self.assertEqual(decode_chunk(packet)[1], 0)
-        reply, label = decode_one(FakeSerial(b"\x05HELLO"), b"Q", self.server)
+        reply, label = decode_one(FakeSerial(b"\x05HELLO\x01"), b"Q", self.server)
         seq, start, flags, rows = decode_chunk(reply)
         self.assertEqual(label, "Q 'HELLO'")
         self.assertEqual(seq, 0)
@@ -62,9 +62,17 @@ class BridgeV04Tests(unittest.TestCase):
         self.assertIn("LINE48", rows[0])
         self.assertIn("OLDER", text)
 
+    def test_asking_from_older_page_forces_reset(self):
+        for i in range(20):
+            save_message(self.db, "user", f"X{i}")
+        packet, _ = decode_one(FakeSerial(b"\x05HELLO\x00"), b"Q", self.server)
+        seq, start, flags, lines = decode_chunk(packet)
+        self.assertTrue(flags & RESET_FLAG)
+        self.assertEqual(len(lines), 6)
+
     def test_long_answer_resets(self):
         # DEMO response is longer than 6 display rows.
-        packet, _ = decode_one(FakeSerial(b"\x04DEMO"), b"Q", self.server)
+        packet, _ = decode_one(FakeSerial(b"\x04DEMO\x01"), b"Q", self.server)
         self.assertEqual(decode_chunk(packet)[2] & RESET_FLAG, RESET_FLAG)
         self.assertLessEqual(decode_chunk(packet)[3].__len__(), 6)
 
