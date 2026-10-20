@@ -217,7 +217,9 @@ class ConversationEngine:
     def cancel(self):
         if self.generating:
             self.cancel_event.set()
-        return self.update(self.total())
+        # Explicitly RESET: the host may have completed more rows than the
+        # calculator has pulled at the instant a cancel is requested.
+        return self.sync()
 
     def reply_retry(self, data: bytes):
         seq = decode_retry(data)
