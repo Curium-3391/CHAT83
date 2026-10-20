@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bridge_v03 import (Conversation, PAGE_SIZE, ROW_WIDTH, db_connect,
-                        encode_page, handle_command, read_exact, save_message,
+                        encode_page, encode_delta, handle_command, read_exact, save_message,
                         text_rows)
 
 
@@ -41,12 +41,53 @@ class BridgeTests(unittest.TestCase):
         ser = FakeSerial(b"\x05HELLO")
         with patch("bridge_v03.time.sleep"):
             status = handle_command(ser, self.conversation, b"Q", 0)
-        self.assertIn("2 rows", status)
-        self.assertEqual(ser.outgoing[:4], b"P\x02\x00\x00")
-        self.assertEqual(len(ser.outgoing), 4 + 2 * ROW_WIDTH)
+        self.assertIn("DELTA 2 rows", status)
+        self.assertEqual(ser.outgoing[:3], b"D\x02\x00")
+        self.assertEqual(len(ser.outgoing), 3 + 2 * ROW_WIDTH)
         self.assertIn(b"WORLD", ser.outgoing)
         roles = self.db.execute("SELECT role FROM messages ORDER BY id").fetchall()
         self.assertEqual(roles, [("user",), ("assistant",)])
+
+    def test_incremental_response_after_existing_24_line_cache(self):
+        for i in range(50):
+            save_message(self.db, "assistant", f"TEST {i:03d}")
+        self.conversation.sync()
+        ser = FakeSerial(b"\x05HELLO")
+        with patch("bridge_v03.time.sleep"):
+            status = handle_command(ser, self.conversation, b"Q", 0)
+        self.assertIn("DELTA 2 rows", status)
+        self.assertEqual(ser.outgoing[:3], bytes([ord("D"), 2, 1]))
+        self.assertEqual(len(ser.outgoing), 27)
+        self.assertEqual(self.conversation.page_start, 28)
+
+    def test_old_page_question_falls_back_to_full_page(self):
+        for i in range(60):
+            save_message(self.db, "assistant", f"TEST {i:03d}")
+        self.conversation.sync()
+        self.conversation.older()
+        self.assertNotEqual(self.conversation.page_start, 36)
+        ser = FakeSerial(b"\x04PING")
+        with patch("bridge_v03.time.sleep"):
+            status = handle_command(ser, self.conversation, b"Q", 0)
+        self.assertIn("PAGE 24 rows", status)
+        self.assertEqual(ser.outgoing[:2], b"P\x18")
+        self.assertEqual(len(ser.outgoing), 4 + 24 * ROW_WIDTH)
+
+    def test_large_reply_falls_back_to_page(self):
+        save_message(self.db, "user", "INIT")
+        self.conversation.sync()
+        reply = "word " * 160
+        with patch("bridge_v03.demo_reply", return_value=reply):
+            packet = self.conversation.ask("TEST")
+        self.assertEqual(packet[0], ord("P"))
+        self.assertEqual(packet[1], PAGE_SIZE)
+
+    def test_delta_packet_constraints(self):
+        self.assertEqual(encode_delta(["HELLO".ljust(12)], False)[:3], b"D\x01\x00")
+        with self.assertRaises(ValueError):
+            encode_delta([], False)
+        with self.assertRaises(ValueError):
+            encode_delta(["too short"], True)
 
     def test_scroll_more_than_one_cache(self):
         for i in range(100):
