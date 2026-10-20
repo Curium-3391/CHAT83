@@ -1,55 +1,46 @@
-# CHAT83 v0.3 remote-history protocol (experimental)
+# CHAT83 v0.3.1 remote-history protocol (experimental)
 
-This protocol is **not** compatible with the v0.2 client or bridge. Keep v0.2 files unchanged. Start **bridge_v03.py** before the v0.3 assembly program.
+**Both the Z80 program and Python bridge must be updated together.** The older v0.3 protocol used a three-byte page header; this revision adds a fourth byte.
 
-## Architecture
+## Transport
 
-TI-83 Plus Z80 client (24 rows of local display cache) ↔ upstream jw0k/serial2ti83 on an Arduino Uno ↔ Python bridge ↔ persistent SQLite database.
+TI-83 Plus ⇄ Arduino Uno with jw0k/serial2ti83 ⇄ Windows Python ⇄ SQLite.
 
-The 96×64 LCD displays a title, six cached lines of text and a one-line footer. Each cached row occupies exactly **13 bytes** (12 ASCII chars + NUL for the ROM display routine). The full 24-row cache occupies **312 bytes** inside the Z80 program's RAM allocation. The SQLite database retains complete messages, plus separately wrapped display rows.
+The calculator caches 24 lines, each 12 ASCII characters plus one NUL terminator (312 bytes of writable program RAM). Windows retains all messages and separately wrapped display lines in SQLite. On-screen history has six rows.
 
-**Important:** The 24 lines are a paging cache, not a 24-line conversation limit. The database is not an infinite LLM context window; LLM integration is not yet implemented.
+## TI-83 Plus → PC
 
-## Request bytes, TI → PC
+- `S`: synchronize newest 24 display lines.
+- `O`: get older page.
+- `N`: get newer page.
+- `Q LEN ASCII`: send a question, length 1–12 bytes.
 
-| Request | Wire format | Meaning |
-| --- | --- | --- |
-| Sync | ASCII \`S\` | Fetch the most recent 24 display lines. |
-| Older | ASCII \`O\` | Fetch overlapping older cache page, if available. |
-| Newer | ASCII \`N\` | Fetch overlapping newer cache page, if available. |
-| Ask | ASCII \`Q\`, LENGTH (1 byte), ASCII payload | Submit 1–12 printable ASCII bytes, persist messages, fetch most recent page. |
+## PC → TI-83 Plus
 
-All commands return one page response.
+```text
+byte 0      ASCII 'P'
+byte 1      COUNT (0 to 24)
+byte 2      VIEW, top row of visible cache window
+byte 3      FLAGS: bit0=older data exists, bit1=newer data exists
+bytes 4..   COUNT × 12 printable, space-padded ASCII characters
+```
 
-## Page reply, PC → TI
+Full page size: 292 bytes. Arduino serial pacing is currently 35 ms per byte, so a full page takes around 10 seconds.
 
-\`\`\`text
-byte 0        ASCII 'P' (0x50)
-byte 1        row count, 0..24
-byte 2        viewport first row, 0..max(0,count-6)
-bytes 3..     count * 12 printable ASCII bytes, spaces padded
-\`\`\`
+**Boundary fix:** at the oldest line, if FLAGS bit0 is 0, UP stays local rather than needlessly requesting another 24-line page. Similarly, at the newest line, if bit1 is 0, DOWN stays local. At a real page boundary, downloading an older/newer page still takes time.
 
-A full page is **291 bytes**, not 312; the client adds 24 NUL terminators locally. The bridge sends each byte with a conservative default **35 ms delay** to reduce the risk of overflowing the unmodified Arduino UART buffer.
+**Cursor controls:** a `>` at LCD column 14 marks the selected history line; UP and DOWN move the cursor, scrolling the viewing window when needed. ENTER opens input; the `_` caret after the typed message is steady (not blinking); DEL removes a letter; CLEAR in input returns to history, while CLEAR in history exits.
 
-Scrolling within the current 24-line cache is local. When its boundary is reached, the client sends \`O\` or \`N\` and the PC returns an overlapping new page. SQLite stores messages and display rows across Python restarts; the local cache and scrolling cursor do not survive a calculator restart. \`S\` reloads the latest history.
+## Test procedure
 
-### Known limitations
+1. Keep the working v0.2 for rollback.
+2. Upload the latest v0.3.1 `CHAT83.8xp` from CI, close TiLP.
+3. Launch `py bridge/bridge_v03.py --port COM2`, then `Asm(prgmCHAT83)`.
+4. Type HELLO, then DEMO. Use UP to reach HELLO; repeatedly press UP. **There should be no extra OLDER log line at the oldest record.**
+5. Go DOWN to the newest line and press DOWN again; no unnecessary NEWER request.
+6. Verify `>` follows history navigation; enter the input screen and verify `_` moves with typing and DEL.
+7. Restart both programs to confirm SQLite history survives.
 
-- Both the Z80 and Arduino communication paths use blocking routines.
-- **No checksum, ACK, retry, packet ID or reconnection resynchronization yet.** A corrupted byte or timeout can desync the connection. Restart the calculator program and Python script together.
-- Every page can require up to roughly **10 seconds** to transmit (plus OS and adapter overhead). Waiting is expected, not necessarily a hang.
-- Only calculator ASCII keyboard entry, 12 characters max. Text from the PC is forced to ASCII.
-- Python demo backend is not yet an LLM; \`DEMO\` intentionally generates a long sample response.
-- SQL persistence does not imply safe simultaneous database modification by multiple clients, and very large histories may need indexed page browsing.
+## Limitations
 
-## Test plan
-
-1. Make sure v0.2 still works separately.
-2. Run \`bridge_v03.py\` with \`--port COM2\`, then launch v0.3 on the calculator. Empty database should display NO HISTORY.
-3. ENTER to input; type HELLO and press ENTER. Check that YOU: HELLO and PC: WORLD are in the history.
-4. Repeat with PING, 123 and DEMO. DEMO should span many pages.
-5. Press UP repeatedly into previous cache pages, then DOWN back to the latest page.
-6. Quit calculator and PC bridge, restart both. Recent history should return from SQLite.
-
-If a page response fails, leave v0.2 as the fallback and share the observed LCD and PC log.
+This remains a local canned-reply demonstration, not an LLM integration. The ROM link routines are blocking; no ACK, CRC, retransmission, stream recovery, Unicode, or blinking text caret yet. The Python database (`chat83.sqlite3`) may contain private messages and must remain outside Git.
