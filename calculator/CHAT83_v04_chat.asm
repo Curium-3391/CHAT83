@@ -16,6 +16,8 @@
 ; UI keeps selected/visible rows anchored when prefetch commits.
 ; Only one requested frame can be in flight.
 
+CACHE_ROWS EQU 48
+
 start:
     xor a
     out (00h),a
@@ -255,7 +257,7 @@ commit_older:
     ; Each prepended row pushes current view/cursor indexes forward.
     ld a,(cache_count)
     ld b,a
-    ld a,24
+    ld a,CACHE_ROWS
     sub b
     ld b,a
     ld a,(view_off)
@@ -291,12 +293,12 @@ older_loop:
     ld a,(cache_head)
     or a
     jr nz,older_head_dec
-    ld a,24
+    ld a,CACHE_ROWS
 older_head_dec:
     dec a
     ld (cache_head),a
     ld a,(cache_count)
-    cp 24
+    cp CACHE_ROWS
     jr nz,older_has_space
     ld a,2
     ld (evicted_flag),a
@@ -348,7 +350,7 @@ check_append_start:
 
     ld a,(cache_count)
     ld b,a
-    ld a,24
+    ld a,CACHE_ROWS
     sub b
     ld b,a
     ld a,(view_off)
@@ -369,13 +371,13 @@ newer_loop:
     cp b
     jr z,newer_done
     ld a,(cache_count)
-    cp 24
+    cp CACHE_ROWS
     jr nz,have_append_space
     ld a,1
     ld (evicted_flag),a
     ld a,(cache_head)
     inc a
-    cp 24
+    cp CACHE_ROWS
     jr c,store_new_head
     xor a
 store_new_head:
@@ -510,9 +512,9 @@ ring_addr:
     ld b,a
     ld a,(cache_head)
     add a,b
-    cp 24
+    cp CACHE_ROWS
     jr c,ring_phys
-    sub 24
+    sub CACHE_ROWS
 ring_phys:
     ld hl,history_cache
     ld bc,13
@@ -524,7 +526,7 @@ ring_advance:
     jr nz,ring_advance
     ret
 
-; Add A(0..24) to four-byte little endian [HL].
+; Add A(0..48) to four-byte little endian [HL].
 add_u32:
     add a,(hl)
     ld (hl),a
@@ -674,7 +676,7 @@ try_newer:
     ret nc                  ; selected more than eight rows from end
     ld a,(cache_count)
     ld b,a
-    ld a,24
+    ld a,CACHE_ROWS
     sub b
     ld b,a
     ld a,(view_off)
@@ -706,7 +708,7 @@ try_older:
     ret nc                  ; selected beyond oldest one-third
     ld a,(cache_count)
     ld b,a
-    ld a,24
+    ld a,CACHE_ROWS
     sub b
     ld (safe_space),a
     ld a,(view_off)
@@ -1106,4 +1108,28 @@ history_cache:
     .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 21
     .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 22
     .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 23
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 24
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 25
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 26
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 27
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 28
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 29
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 30
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 31
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 32
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 33
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 34
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 35
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 36
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 37
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 38
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 39
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 40
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 41
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 42
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 43
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 44
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 45
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 46
+    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 47
 .end
