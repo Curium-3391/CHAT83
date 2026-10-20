@@ -156,3 +156,66 @@ class Cache:
                 self.size += 1
         self.inflight = None
         self.check()
+
+
+# Proposed v0.4 chunk frame codec; Python-side only, no Z80 integration yet.
+# Each frame is small enough to stage in six 13-byte Z80 row slots.
+# All integer offsets are little-endian unsigned 32-bit global line indices.
+import struct
+
+
+def _xor(data: bytes) -> int:
+    value = 0
+    for item in data:
+        value ^= item
+    return value
+
+
+def encode_fetch(req: Fetch) -> bytes:
+    """F + SEQ + DIRECTION(0 older,1 newer) + START(u32) + COUNT + XOR."""
+    if not (1 <= req.sequence <= 255 and req.direction in (-1, 1)
+            and 0 <= req.start <= 0xFFFFFFFF and 1 <= req.count <= LOOKAHEAD):
+        raise ValueError("invalid fetch request")
+    raw = b"F" + bytes([req.sequence, int(req.direction == 1)]) \
+        + struct.pack("<I", req.start) + bytes([req.count])
+    return raw + bytes([_xor(raw)])
+
+
+def decode_fetch(raw: bytes) -> Fetch:
+    if len(raw) != 9 or raw[0:1] != b"F" or _xor(raw) != 0:
+        raise ValueError("malformed fetch request or checksum")
+    seq, direction = raw[1], raw[2]
+    if not seq or direction not in (0, 1) or not 1 <= raw[7] <= LOOKAHEAD:
+        raise ValueError("invalid fetch request attributes")
+    return Fetch(1 if direction else -1, struct.unpack("<I", raw[3:7])[0],
+                 raw[7], seq)
+
+
+def encode_chunk(req: Fetch, rows: list[str], flags: int) -> bytes:
+    """C + SEQ + START(u32) + COUNT + FLAGS + 12*COUNT ASCII + XOR."""
+    if not 0 <= flags <= 3 or len(rows) != req.count:
+        raise ValueError("bad chunk length or flags")
+    if not 1 <= req.count <= LOOKAHEAD:
+        raise ValueError("too many chunk rows")
+    if any(len(r) != 12 or not r.isascii() or not r.isprintable() for r in rows):
+        raise ValueError("chunk lines must be printable 12-byte ASCII")
+    raw = b"C" + bytes([req.sequence]) + struct.pack("<I", req.start) \
+        + bytes([req.count, flags]) + "".join(rows).encode("ascii")
+    return raw + bytes([_xor(raw)])
+
+
+def decode_chunk(raw: bytes) -> tuple[int, int, int, list[str]]:
+    if len(raw) < 9 or raw[:1] != b"C" or _xor(raw) != 0:
+        raise ValueError("malformed chunk or checksum")
+    seq = raw[1]
+    start = struct.unpack("<I", raw[2:6])[0]
+    count, flags = raw[6], raw[7]
+    if not seq or not 1 <= count <= LOOKAHEAD or flags > 3:
+        raise ValueError("invalid chunk header")
+    if len(raw) != 9 + count * 12:
+        raise ValueError("invalid chunk size")
+    payload = raw[8:-1]
+    if any(not 32 <= ch <= 126 for ch in payload):
+        raise ValueError("non-printable chunk payload")
+    lines = [payload[x:x + 12].decode("ascii") for x in range(0, len(payload), 12)]
+    return seq, start, flags, lines
