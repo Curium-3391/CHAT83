@@ -30,28 +30,48 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
 實驗版只支援**原版 TI-83 Plus**；不要在 TI-83 Plus Silver Edition
 或 TI-84 系列運行讀 Port 05h 的程式，該 I/O port 定義不同。
 
-## 第一次安裝
+## 第一次安裝：先傳 TI 程式，最後才刷 Uno v0.5
 
-1. 在 Windows 安裝 Python 3.9+、TiLP 與 Arduino IDE。
-2. 備份之前 v0.4 的 SQLite 資料庫及 Uno 上游 `serial2ti83.ino`。
-3. 暫時拔下計算機的 Link 插頭；用 Arduino IDE 開啟
-   `arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino`，板子選
-   **Arduino Uno**，序列埠選 Uno 的 COM 埠，按 Upload。
-   上傳完成後關閉 Arduino IDE Serial Monitor。
-4. 以 TiLP 傳入 **`C83V5.8xp`**，完全關閉 TiLP。
-5. 確認沿用原本已經驗證的 Link 接線：**Uno D2 → TIP**、
-   **Uno D3 → RING**、**GND → 插頭 sleeve**。
-   Uno 輸出腳只會拉 LOW 或放開成 INPUT_PULLUP，不會主動將
-   5V 強制輸出 HIGH；禁止在未知硬體線路上直接外加電壓。
-6. Windows PowerShell 在套件資料夾執行：
+**⚠️ 安裝順序極其重要：同一塊 Uno 使用兩種互不相容的韌體。**
+原版 `serial2ti83.ino` 是之前用來連接 TiLP 的 9600-baud 橋接器；
+新的 `CHAT83_Uno_v05.ino` 則是 115200-baud COBS/CRC8 橋接器。
+**後者並未實作 TiLP 相容模式。先刷 v0.5 再執行 TiLP，
+會出現「timeout occurred while reading from the device」；
+這不代表 TI-83 Plus 或連接線故障。**
+
+1. 安裝 Python 3.9+、TiLP 與 Arduino IDE。備份之前 v0.4 的 SQLite
+   資料庫及先前能正常與 TiLP 通訊的 Uno 韌體。
+2. **保留或暫時刷回原版 `serial2ti83`**，來源：
+   [jw0k/serial2ti83/serial2ti83.ino](https://github.com/jw0k/serial2ti83/blob/master/serial2ti83.ino)。
+   若你的 Uno 已經刷成 CHAT83 v0.5，先關閉 Python Bridge／TiLP 與
+   Arduino 序列監控器，再用 Arduino IDE 將上游原版 sketch 重新上傳。
+3. 用之前驗證過的 Uno TIP=D2／RING=D3／GND 接線，**在原版韌體下
+   使用 TiLP 傳入 `C83V5.8xp`**；確認計算機的 PRGM 清單內出現
+   `C83V5`。完整關閉 TiLP，釋放 COM 埠。
+4. 暫時拔下計算機的 Link 插頭，再用 Arduino IDE 開啟
+   `CHAT83_Uno_v05.ino`，板子選 Arduino Uno，重新上傳新的 v0.5
+   韌體。上傳完成後關閉 Arduino IDE 的 Serial Monitor，重新接上
+   計算機原本的 Link 接線。
+5. 確認接線：**Uno D2 → TIP、D3 → RING、GND → sleeve**。
+   Arduino 只會把線路拉 LOW 或放開成 INPUT_PULLUP，
+   不會主動強推 HIGH；禁止在未知硬體線路外加電壓。
+6. 在解壓縮套件的 PowerShell 工作目錄執行：
 
    ```powershell
    py -m pip install -r requirements-v05.txt
    .\start-chat83-v05.ps1 -Port COM2 -Provider demo -GapMs 35
    ```
 
-7. 看到 `CHAT83 Uno v0.5 handshake OK`、`Listening...` 後，
-   在原版 TI-83 Plus 執行 `Asm(prgmC83V5)`。
+7. 看到 `CHAT83 Uno v0.5 handshake OK` 與 `Listening...` 後，
+   在**原版** TI-83 Plus 執行 `Asm(prgmC83V5)`。
+
+**如果手邊另有原廠 TI USB／Graph Link 傳輸線**，可以直接用那條線
+透過 TiLP 傳入 `C83V5.8xp`，之後只需刷一次 Uno v0.5。這是獨立
+傳輸線的替代做法，不代表 v0.5 Uno 韌體本身支援 TiLP。
+
+**如果日後要再更新計算機端 `.8xp`**，使用同一 Uno 時仍須切回
+`serial2ti83` 來傳檔，再刷回 `CHAT83_Uno_v05`；除非使用獨立
+TI 傳輸線。這是目前 v0.5 安裝工具鏈的限制。
 
 ### 啟動 LLM
 
