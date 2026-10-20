@@ -22,7 +22,7 @@ TI-83 Plus (Z80) <-- 2.5 mm link --> Arduino Uno
 - Continue sending messages without restarting the PC bridge.
 - Key examples confirmed in a real test: `HELLO` → `WORLD`, `123` → `PC GOT: 123`, `A` → `PC GOT: A`.
 
-**Current limitation:** the calculator clears the previous message when starting another. Conversation history/scrolling was prototyped as v0.3 but has not passed full assembly and device tests.
+**Current limitation (v0.2):** the calculator clears the previous message when starting another. Experimental v0.3 adds paging and SQLite history and has passed automated compilation, but still needs real-device testing.
 
 ## Project layout
 
@@ -53,6 +53,28 @@ docs/
 Controls: **ENTER** submits a request (and starts the next one when viewing the reply); **DEL** removes a character; **CLEAR** exits.
 
 The original Arduino sketch provides byte-level transport, not delivery acknowledgment or retries. Do not assume data integrity from the presence of a PC log alone. See [protocol details](docs/protocol.md) for limitations and timing.
+
+## Experimental v0.3.1: Remote History + Cursors
+
+This is a **hardware-untested refinement** of v0.3 on branch `feat/remote-history-v03`. The old v0.3 was reported working on real TI-83 Plus hardware (SYNC, HELLO, DEMO). v0.3.1 adds:
+
+- A `>` history cursor at the right of the currently selected row.
+- A steady `_` text-entry cursor, which follows typing and DEL.
+- Server-provided **older/newer boundary flags** so pressing UP at the oldest record or DOWN at the newest record no longer starts a pointless ~10-second transfer.
+- A new four-byte page header: `P COUNT VIEW FLAGS`. **Old v0.3 binaries and Python bridge are NOT wire-compatible with this refinement.**
+
+Relevant files: `calculator/CHAT83_v03_remote.asm`, `bridge/bridge_v03.py`, [protocol details](docs/protocol-v03.md). The CI workflow builds a downloadable experimental `CHAT83.8xp` artifact.
+
+To test, first install v0.3.1 `CHAT83.8xp` with TiLP, close TiLP, and replace the old local Python file with the v0.3.1 `bridge_v03.py` before launching:
+
+```powershell
+py -m pip install -r bridge/requirements.txt
+py bridge/bridge_v03.py --port COM2
+```
+
+On the calculator run `Asm(prgmCHAT83)`, send `HELLO` and `DEMO`, then scroll UP to the oldest record and press UP a few more times. The PC log should show no extra `OLDER` request at the global beginning. Scroll to the newest record and verify no redundant `NEWER` request. The `>` and `_` cursors should track navigation and typing.
+
+Persistent conversations are stored in a gitignored `chat83.sqlite3` file beside the Python script. The SQLite schema is unchanged; the existing database from v0.3 can be reused. The LLM connection is still planned, **not yet implemented**.
 
 ## Roadmap
 

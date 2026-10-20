@@ -1,0 +1,37 @@
+name: Verify v0.3 prototype
+on:
+  push:
+    branches: [feat/remote-history-v03]
+  pull_request:
+    paths:
+      - 'calculator/CHAT83_v03_remote.asm'
+      - 'bridge/bridge_v03.py'
+      - 'tests/**'
+      - '.github/workflows/verify-v03.yml'
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test PC protocol and persistence (no hardware)
+        run: PYTHONPATH=bridge python -m unittest discover -s tests -v
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and build SPASM-ng (assembly code only)
+        run: |
+          git clone --depth 1 https://github.com/alberthdev/spasm-ng.git spasm-ng
+          make -C spasm-ng NO_APPSIGN=1 -j2
+      - name: Assemble TI-83 Plus experimental client
+        run: |
+          mkdir -p build
+          ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v03_remote.asm build/CHAT83.8xp
+          test -s build/CHAT83.8xp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v03-experimental-8xp
+          path: build/CHAT83.8xp
