@@ -136,6 +136,18 @@ class UnoUsb:
         elif k == b"E" and len(packet) == 2:
             self.link_errors += 1
             raise LinkFailure(f"Arduino error code {packet[1]}")
+        elif k == b"J" and len(packet) == 14:
+            def u16(offset):
+                return packet[offset] | (packet[offset + 1] << 8)
+            levels = packet[12]
+            print(
+                "[UNO-DIAG] start={} ack={} rx_bytes={} rx_to={} tx_to={} "
+                "state={} TIP={} RING={} last_rx=0x{:02X}".format(
+                    u16(1), u16(3), u16(5), u16(7), u16(9),
+                    packet[11], "H" if levels & 1 else "L",
+                    "H" if levels & 2 else "L", packet[13]),
+                flush=True,
+            )
         else:
             self.events.append(packet)
         return True
@@ -168,6 +180,15 @@ class UnoUsb:
         if len(ack) != 3 or ack[2] != 0:
             raise LinkFailure(f"Uno rejected gap setting: {ack!r}")
         self.gap_ms = gap_ms
+
+    def enable_link_diagnostics(self):
+        """Ask Uno to periodically report physical TIP/RING and RX bit status."""
+        self._send(b"D\x01")
+        ack = self._wait_for(b"A", seq=0)
+        if len(ack) != 3 or ack[2] != 0:
+            raise LinkFailure(f"Uno rejected diagnostic mode: {ack!r}")
+        print("[UNO-DIAG] enabled: counts are bit attempts/acks/bytes/errors",
+              flush=True)
 
     def read(self, size: int = 1) -> bytes:
         if size <= 0:
