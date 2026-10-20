@@ -73,8 +73,8 @@ class FrameTests(unittest.TestCase):
 class RingTests(unittest.TestCase):
     def test_up_prefetch_keeps_viewport_and_selection(self):
         c = Cache()
-        c.load(100, [row(i) for i in range(100, 124)])
-        for _ in range(17):
+        c.load(100, [row(i) for i in range(100, 100 + CAPACITY)])
+        for _ in range(CAPACITY - 7):
             self.assertTrue(c.move(-1))
         old_selected = c.cursor
         old_visible = c.visible()
@@ -82,52 +82,52 @@ class RingTests(unittest.TestCase):
         self.assertIsNotNone(req)
         self.assertEqual((req.start, req.count), (94, LOOKAHEAD))
         c.commit(req, [row(i) for i in range(94, 100)])
-        self.assertEqual((c.start, c.end()), (94, 118))
+        self.assertEqual((c.start, c.end()), (94, 94 + CAPACITY))
         self.assertEqual(c.cursor, old_selected)
         self.assertEqual(c.visible(), old_visible)
         self.assertEqual(c.at(94), row(94))
-        self.assertEqual(c.at(117), row(117))
+        self.assertEqual(c.at(94 + CAPACITY - 1), row(94 + CAPACITY - 1))
 
     def test_down_prefetch_keeps_selection(self):
         c = Cache()
-        c.load(100, [row(i) for i in range(100, 124)])
+        c.load(100, [row(i) for i in range(100, 100 + CAPACITY)])
         old_cursor = c.cursor
         old_visible = c.visible()
         req = c.plan(200, +1)
         self.assertIsNotNone(req)
-        self.assertEqual((req.start, req.count), (124, 6))
-        c.commit(req, [row(i) for i in range(124, 130)])
-        self.assertEqual((c.start, c.end()), (106, 130))
+        self.assertEqual((req.start, req.count), (100 + CAPACITY, 6))
+        c.commit(req, [row(i) for i in range(100 + CAPACITY, 106 + CAPACITY)])
+        self.assertEqual((c.start, c.end()), (106, 106 + CAPACITY))
         self.assertEqual(c.cursor, old_cursor)
         self.assertEqual(c.visible(), old_visible)
-        self.assertEqual(c.at(129), row(129))
+        self.assertEqual(c.at(105 + CAPACITY), row(105 + CAPACITY))
 
     def test_no_two_inflight_and_malformed_response_is_atomic(self):
         c = Cache()
-        c.load(100, [row(i) for i in range(100, 124)])
+        c.load(100, [row(i) for i in range(100, 100 + CAPACITY)])
         req = c.plan(200, 1)
         self.assertIsNone(c.plan(200, -1))
         before = (c.start, c.end(), c.rows[:], c.head)
         with self.assertRaises(ValueError):
-            c.commit(req, [row(124)])  # wrong number of rows
+            c.commit(req, [row(100 + CAPACITY)])  # wrong number of rows
         self.assertEqual((c.start, c.end(), c.rows[:], c.head), before)
-        c.commit(req, [row(i) for i in range(124, 130)])
+        c.commit(req, [row(i) for i in range(100 + CAPACITY, 106 + CAPACITY)])
 
     def test_cannot_evict_current_view_after_user_moves_during_fetch(self):
         c = Cache()
-        c.load(100, [row(i) for i in range(100, 124)])
+        c.load(100, [row(i) for i in range(100, 100 + CAPACITY)])
         req = c.plan(200, 1)
-        for _ in range(18):
+        for _ in range(CAPACITY - 6):
             self.assertTrue(c.move(-1))
         prior = (c.start, c.end(), c.rows[:], c.head)
         with self.assertRaisesRegex(ValueError, "overwrite a visible row"):
-            c.commit(req, [row(i) for i in range(124, 130)])
+            c.commit(req, [row(i) for i in range(100 + CAPACITY, 106 + CAPACITY)])
         self.assertEqual((c.start, c.end(), c.rows[:], c.head), prior)
 
     def test_page_boundaries_no_speculation(self):
         c = Cache()
-        c.load(0, [row(i) for i in range(24)])
-        for _ in range(19):
+        c.load(0, [row(i) for i in range(CAPACITY)])
+        for _ in range(CAPACITY - 5):
             c.move(-1)
         self.assertIsNone(c.plan(24, -1))
         c.load(90, [row(i) for i in range(90, 100)])
@@ -135,7 +135,7 @@ class RingTests(unittest.TestCase):
 
     def test_repeated_upward_prefetch(self):
         c = Cache()
-        c.load(180, [row(i) for i in range(180, 204)])
+        c.load(180, [row(i) for i in range(180, 180 + CAPACITY)])
         for _ in range(90):
             c.move(-1)
             req = c.plan(250, -1)
