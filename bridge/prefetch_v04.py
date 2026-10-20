@@ -1,4 +1,4 @@
-"""Pure Python model for CHAT83 v0.4 predictive 24-row ring buffer.
+"""Pure Python model for CHAT83 v0.4 predictive 48-row ring buffer.
 
 Not the physical Z80 implementation yet: this deterministic model is used to
 prove cache / cursor / viewport invariants before touching TI-83 Plus RAM.
@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-CAPACITY = 24
+CAPACITY = 48
 VISIBLE = 6
 LOOKAHEAD = 6
 PREFETCH_THRESHOLD = 8
@@ -139,7 +139,7 @@ class Cache:
             if self.start + evict > keep_low:
                 raise ValueError("would overwrite a visible row")
 
-        # Validated. Commit without shifting the existing 24×13 logical lines.
+        # Validated. Commit without shifting the existing 48×13 logical lines.
         if request.direction == -1:
             for line in reversed(lines):
                 self.head = (self.head - 1) % CAPACITY
