@@ -313,6 +313,8 @@ def main():
                     help="Uno inter-byte Link gap (2..50 ms; first hardware test keep 35)")
     ap.add_argument("--max-context-chars", type=int, default=8000)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--debug-link", action="store_true",
+                    help="ask patched Uno to report physical link counters every 500ms")
     ap.add_argument("--adaptive", action="store_true",
                     help="experimental rate tuning; enable only after baseline hardware validation")
     args = ap.parse_args()
@@ -333,6 +335,8 @@ def main():
             link = UnoUsb(ser, gap_ms=args.gap_ms, timeout=10)
             link.connect()  # refuses to run with upstream serial2ti83 firmware.
             print(f"CHAT83 Uno v0.5 handshake OK; gap {args.gap_ms}ms")
+            if args.debug_link:
+                link.enable_link_diagnostics()
             try:
                 serve(link, engine, verbose=args.verbose, adaptive=args.adaptive)
             finally:
