@@ -33,6 +33,9 @@ class MockUsbSerial:
         elif k == b"G":
             self.gap = decoded[1]
             self.out.extend(make_frame(b"A\x00\x00"))
+        elif k == b"D":
+            self.debug_enabled = bool(decoded[1])
+            self.out.extend(make_frame(b"A\x00\x00"))
         elif k == b"T":
             seq, count = decoded[1], decoded[2]
             if count != len(decoded) - 3:
@@ -80,6 +83,23 @@ class UsbTests(unittest.TestCase):
         serial.from_calc(b"HELLO")
         self.assertEqual(b"".join(link.read(1) for _ in range(5)), b"HELLO")
         self.assertEqual(link.rx_count, 5)
+
+    def test_optional_link_debug_counters(self):
+        import contextlib
+        import io
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, timeout=0.01)
+        link.connect()
+        capture = io.StringIO()
+        with contextlib.redirect_stdout(capture):
+            link.enable_link_diagnostics()
+            self.assertTrue(serial.debug_enabled)
+            report = bytes([ord('J'), 8, 0, 8, 0, 1, 0,
+                            0, 0, 0, 0, 0, 3, ord('S')])
+            serial.out.extend(make_frame(report))
+            self.assertEqual(link.read(1), b'')
+        self.assertIn("start=8 ack=8 rx_bytes=1", capture.getvalue())
+        self.assertIn("last_rx=0x53", capture.getvalue())
 
     def test_bad_usb_crc_rejected(self):
         raw = bytearray(make_frame(b"Rz"))
