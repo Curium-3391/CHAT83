@@ -12,7 +12,7 @@
 ;
 ; Frame: C SEQ START0 START1 START2 START3 COUNT FLAGS ROWS XOR
 ; FLAGS 1=older, 2=newer, 4=RESET, 8=LLM_BUSY, 16=LLM_ERR. MAX 6 rows per frame.
-; Active ring 24*13 bytes, staging received frame 81 bytes.
+; Active ring 48*13 bytes, staging received frame 81 bytes.
 ; UI keeps selected/visible rows anchored when prefetch commits.
 ; Only one requested frame can be in flight.
 
@@ -46,8 +46,11 @@ start:
     ld (poll_timer),a
     ld (poll_timer+1),a
     ld (retry_count),a
-    ld a,0FFh                  ; initially prefetch older after SYNC
-    ld (direction),a
+    ld (idle_ticks),a
+    ld (idle_ticks+1),a
+    ld (repeat_ticks),a
+    ld (repeat_ticks+1),a
+    ld (direction),a           ; prefetch only after a real scroll
     call draw_loading
     ld a,'S'
     ld (request_kind),a
@@ -56,6 +59,7 @@ start:
 
 main_loop:
     call poll_rx
+    call timeout_tick
     call poll_keys
     ld a,(exit_flag)
     or a
@@ -103,6 +107,10 @@ poll_rx:
     ret z
     in a,(05h)
     ld b,a
+    xor a
+    ld (idle_ticks),a
+    ld (idle_ticks+1),a
+    ld a,b
     ld a,(rx_pos)
     or a
     jr nz,rx_store
@@ -207,6 +215,26 @@ retry_seq_ready:
     ret
 
 ; A=byte, update cumulative CRC8 (poly 07, init 00), preserves BC/HL.
+timeout_tick:
+    ld a,(request_kind)
+    or a
+    jr z,timeout_clear
+    ld hl,(idle_ticks)
+    inc hl
+    ld (idle_ticks),hl
+    ld a,h
+    cp 0F0h
+    ret c
+    xor a
+    ld (idle_ticks),a
+    ld (idle_ticks+1),a
+    jp retry_frame
+timeout_clear:
+    xor a
+    ld (idle_ticks),a
+    ld (idle_ticks+1),a
+    ret
+
 crc8_update:
     push bc
     ld c,a
@@ -275,8 +303,13 @@ non_fetch_frame:
     cp 'U'
     jp z,commit_newer
     cp 'K'
-    jp z,commit_newer
+    jr z,non_fetch_cancel
     jp packet_error
+non_fetch_cancel:
+    ld a,(rx_frame+7)
+    and 4
+    jp nz,commit_reset
+    jp commit_newer
 non_fetch_q:
     ld a,(rx_frame+7)
     and 4
@@ -506,6 +539,18 @@ newer_done:
     jp z,apply_flags_draw
     jp apply_fetch_flags
 update_tail:
+    ld a,(rows_to_copy)
+    or a
+    jr nz,update_maybe_follow
+    ; Empty live poll: avoid clearing/redrawing LCD at every interval.
+    call read_model_flags
+    ld a,(rx_frame+7)
+    and 3
+    ld (page_flags),a
+    xor a
+    ld (request_kind),a
+    ret
+update_maybe_follow:
     ld a,(follow_tail)
     or a
     jp z,apply_flags_draw
@@ -699,10 +744,17 @@ history_key:
     jr z,request_exit
     ld a,(error_flag)
     or a
-    ret nz
+    jr z,history_not_error
+    ld a,b
+    cp skMode
+    jp z,restart_sync
+    ret
+history_not_error:
     ld a,b
     cp skEnter
     jr z,request_input
+    cp skMode
+    jp z,maybe_cancel_model
     cp skUp
     jr z,key_up
     cp skDown
@@ -712,6 +764,48 @@ request_exit:
     ld a,1
     ld (exit_flag),a
     ret
+maybe_cancel_model:
+    ld a,(error_flag)
+    or a
+    jp nz,restart_sync
+    ld a,(busy_flag)
+    or a
+    ret z
+    jp send_cancel
+
+restart_sync:
+    xor a
+    ld (error_flag),a
+    ld (retry_count),a
+    call disable_rx
+    ld a,'S'
+    bcall(_SendAByte)
+    ld a,'S'
+    ld (request_kind),a
+    call reset_receiver_state
+    call enable_rx
+    call draw_loading
+    ret
+
+send_cancel:
+    call disable_rx
+    ld a,'K'
+    ld (cancel_wire),a
+    xor a
+    ld (crc_state),a
+    ld a,'K'
+    call crc8_update
+    ld a,(crc_state)
+    ld (cancel_wire+1),a
+    ld hl,cancel_wire
+    ld a,2
+    call send_bytes
+    ld a,'K'
+    ld (request_kind),a
+    call reset_receiver_state
+    call enable_rx
+    ret
+
 request_input:
     ld a,(busy_flag)
     or a
@@ -956,6 +1050,8 @@ reset_receiver_state:
     ld (rx_pos),a
     ld (crc_state),a
     ld (rx_expected),a
+    ld (idle_ticks),a
+    ld (idle_ticks+1),a
     ret
 
 ; Cooperative live-update polling. F is only sent for history navigation;
@@ -1454,6 +1550,9 @@ editor_offset:  .db 0
 input_line:     .db "            ",0
 alpha_mode:     .db 0
 retry_wire:     .db 0,0,0
+cancel_wire:    .db 0,0
+idle_ticks:     .dw 0
+repeat_ticks:   .dw 0
 update_wire:    .db 0,0,0,0,0,0
 sequence:       .db 0
 expect_seq:     .db 0
