@@ -86,6 +86,7 @@ jobs:
             bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
           cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
           cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          cp docs/v05-wire-protocol.md build/CHAT83-v05-Windows/WIRE-PROTOCOL.md
           test -s build/CHAT83-v05-Windows/C83V5.8xp
           test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"
       - uses: actions/upload-artifact@v4
