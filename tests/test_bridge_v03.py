@@ -35,15 +35,15 @@ class BridgeTests(unittest.TestCase):
         self.db.close()
 
     def test_empty_sync(self):
-        self.assertEqual(encode_page(self.conversation.sync()), b"P\x00\x00")
+        self.assertEqual(encode_page(self.conversation.sync()), b"P\x00\x00\x00")
 
     def test_question_and_persistence(self):
         ser = FakeSerial(b"\x05HELLO")
         with patch("bridge_v03.time.sleep"):
             status = handle_command(ser, self.conversation, b"Q", 0)
         self.assertIn("2 rows", status)
-        self.assertEqual(ser.outgoing[:3], b"P\x02\x00")
-        self.assertEqual(len(ser.outgoing), 3 + 2 * ROW_WIDTH)
+        self.assertEqual(ser.outgoing[:3], b"P\x02\x00\x00")
+        self.assertEqual(len(ser.outgoing), 4 + 2 * ROW_WIDTH)
         self.assertIn(b"WORLD", ser.outgoing)
         roles = self.db.execute("SELECT role FROM messages ORDER BY id").fetchall()
         self.assertEqual(roles, [("user",), ("assistant",)])
@@ -51,14 +51,14 @@ class BridgeTests(unittest.TestCase):
     def test_scroll_more_than_one_cache(self):
         for i in range(100):
             save_message(self.db, "assistant", f"TEST {i:03d}")
-        view, latest = self.conversation.sync()
-        self.assertEqual((view, len(latest)), (18, PAGE_SIZE))
+        view, latest, flags = self.conversation.sync()
+        self.assertEqual((view, len(latest), flags), (18, PAGE_SIZE, 1))
         self.assertIn("TEST 099", latest[-1])
-        view, older = self.conversation.older()
-        self.assertEqual((view, len(older)), (17, PAGE_SIZE))
+        view, older, flags = self.conversation.older()
+        self.assertEqual((view, len(older), flags), (17, PAGE_SIZE, 3))
         self.assertIn("TEST 058", older[0])
-        view, newer = self.conversation.newer()
-        self.assertEqual((view, len(newer)), (1, PAGE_SIZE))
+        view, newer, flags = self.conversation.newer()
+        self.assertEqual((view, len(newer), flags), (1, PAGE_SIZE, 1))
         self.assertIn("TEST 099", newer[-1])
 
     def test_clamped_ends(self):
@@ -67,6 +67,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.conversation.sync()[0], 0)
         self.assertEqual(self.conversation.older()[0], 0)
         self.assertEqual(self.conversation.newer()[0], 0)
+
+    def test_boundary_flags_prevent_redundant_transfers(self):
+        for i in range(50):
+            save_message(self.db, "assistant", f"LINE{i}")
+        # Latest page: no newer page, but older pages exist.
+        view, rows, flags = self.conversation.sync()
+        self.assertEqual((len(rows), flags), (24, 1))
+        # Move to absolute start and verify older bit cleared.
+        while self.conversation.page_start > 0:
+            _, rows, flags = self.conversation.older()
+        self.assertEqual(flags & 1, 0)
+        self.assertEqual(flags & 2, 2)
+        # Asking for older page anyway cannot move the boundary.
+        old_start = self.conversation.page_start
+        self.conversation.older()
+        self.assertEqual(self.conversation.page_start, old_start)
+
+    def test_page_flag_encoding(self):
+        packet = encode_page((0, ["TEST".ljust(12)], 3))
+        self.assertEqual(packet[:4], b"P\\x01\\x00\\x03")
+        self.assertEqual(len(packet), 16)
+        with self.assertRaises(ValueError):
+            encode_page((0, [], 4))
 
     def test_long_reply_and_ascii(self):
         self.conversation.ask("DEMO")
