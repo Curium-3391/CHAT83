@@ -193,10 +193,10 @@ def decode_fetch(raw: bytes) -> Fetch:
 
 def encode_chunk(req: Fetch, rows: list[str], flags: int) -> bytes:
     """C + SEQ + START(u32) + COUNT + FLAGS + 12*COUNT ASCII + XOR."""
-    if not 0 <= flags <= 3 or len(rows) != req.count:
+    if not 0 <= flags <= 7 or len(rows) != req.count:
         raise ValueError("bad chunk length or flags")
-    if not 1 <= req.count <= LOOKAHEAD:
-        raise ValueError("too many chunk rows")
+    if not 0 <= req.count <= LOOKAHEAD or (not req.count and not (flags & 4)):
+        raise ValueError("chunk count must be 1..6, or zero for an empty RESET")
     if any(len(r) != 12 or not r.isascii() or not r.isprintable() for r in rows):
         raise ValueError("chunk lines must be printable 12-byte ASCII")
     raw = b"C" + bytes([req.sequence]) + struct.pack("<I", req.start) \
@@ -210,7 +210,7 @@ def decode_chunk(raw: bytes) -> tuple[int, int, int, list[str]]:
     seq = raw[1]
     start = struct.unpack("<I", raw[2:6])[0]
     count, flags = raw[6], raw[7]
-    if not seq or not 1 <= count <= LOOKAHEAD or flags > 3:
+    if not 0 <= count <= LOOKAHEAD or flags > 7 or (not count and not (flags & 4)):
         raise ValueError("invalid chunk header")
     if len(raw) != 9 + count * 12:
         raise ValueError("invalid chunk size")
