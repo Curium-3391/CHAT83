@@ -2,7 +2,8 @@
 import unittest
 from unittest.mock import patch
 
-from prefetch_v04 import Cache, CAPACITY, LOOKAHEAD
+from prefetch_v04 import (Cache, CAPACITY, LOOKAHEAD, Fetch, encode_fetch,
+                          decode_fetch, encode_chunk, decode_chunk)
 from probe_v04 import expected_values, make_payload, send_probe
 
 
@@ -35,6 +36,38 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(ser.bytes_sent, bytes(range(8)))
         with self.assertRaises(ValueError):
             send_probe(ser, b"A", pace=0.02)
+
+
+class FrameTests(unittest.TestCase):
+    def test_fetch_roundtrip_and_corruption(self):
+        req = Fetch(-1, 0x12345678, 6, 7)
+        raw = encode_fetch(req)
+        self.assertEqual(len(raw), 9)
+        self.assertEqual(decode_fetch(raw), req)
+        bad = bytearray(raw)
+        bad[4] ^= 0x01
+        with self.assertRaises(ValueError):
+            decode_fetch(bytes(bad))
+
+    def test_chunk_roundtrip_and_corruption(self):
+        req = Fetch(1, 500, 6, 9)
+        rows = [row(i) for i in range(500, 506)]
+        wire = encode_chunk(req, rows, 3)
+        self.assertEqual(len(wire), 9 + 6 * 12)
+        self.assertEqual(decode_chunk(wire), (9, 500, 3, rows))
+        bad = bytearray(wire)
+        bad[-2] ^= 1
+        with self.assertRaises(ValueError):
+            decode_chunk(bytes(bad))
+        with self.assertRaises(ValueError):
+            decode_chunk(wire[:-1])
+
+    def test_chunk_rejects_nonascii_and_oversize(self):
+        req = Fetch(-1, 0, 1, 1)
+        with self.assertRaises(ValueError):
+            encode_chunk(req, ["中文".ljust(12)], 0)
+        with self.assertRaises(ValueError):
+            encode_chunk(Fetch(-1, 0, 7, 1), [row(i) for i in range(7)], 0)
 
 
 class RingTests(unittest.TestCase):
