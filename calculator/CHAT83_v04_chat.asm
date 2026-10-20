@@ -186,7 +186,7 @@ validate_start:
     jp nz,packet_error
     ld a,(pending_dir)
     or a
-    jr z,commit_newer
+    jp z,commit_newer
     jp commit_older
 
 non_fetch_frame:
@@ -231,22 +231,22 @@ reset_loop:
     ld a,(stage_index)
     inc a
     ld (stage_index),a
-    jr reset_loop
+    jp reset_loop
 reset_done:
     ld a,(cache_count)
     or a
-    jr z,apply_flags_draw
+    jp z,apply_flags_draw
     dec a
     ld (cursor_off),a
     cp 6
     jr c,reset_small
     sub 5
     ld (view_off),a
-    jr apply_flags_draw
+    jp apply_flags_draw
 reset_small:
     xor a
     ld (view_off),a
-    jr apply_flags_draw
+    jp apply_flags_draw
 
 ; Verify contiguous index and sufficient room to preserve 6 visible lines.
 commit_older:
@@ -407,18 +407,18 @@ newer_done:
     jp nz,apply_fetch_flags
     ld a,(cache_count)
     or a
-    jr z,apply_flags_draw
+    jp z,apply_flags_draw
     dec a
     ld (cursor_off),a
     cp 6
     jr c,newer_small
     sub 5
     ld (view_off),a
-    jr apply_flags_draw
+    jp apply_flags_draw
 newer_small:
     xor a
     ld (view_off),a
-    jr apply_flags_draw
+    jp apply_flags_draw
 
 discard_prefetch:
     ; Data was valid, but user moved during transmission. Keep selected and
