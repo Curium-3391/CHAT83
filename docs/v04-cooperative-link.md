@@ -76,3 +76,81 @@ After Stage 1 passes actual hardware:
 5. Keep input responsiveness while receiving and benchmark rapid reverse scrolling, low-memory/history edges, and long replies. Do not merge experimental hardware I/O into \`main\` until the real TI-83 Plus confirms it.
 
 **What cannot be guaranteed:** Remote data unavailable locally cannot appear with zero latency. Smoothness means the UI remains responsive, even if an unavailable row needs a short LOAD indication.
+
+
+## Stage 3 experimental integrated chat client — NOW IMPLEMENTED, HARDWARE-UNTESTED
+
+A separate hardware-testable interactive terminal has been added. It does **not**
+replace the working v0.3.2 calculator app and has a different program name:
+
+- \`calculator/CHAT83_v04_chat.asm\` → compiled artifact \`C83V4.8xp\`
+- \`bridge/bridge_v04.py\` (depends on \`bridge_v03.py\` and \`prefetch_v04.py\` in the **same folder**)
+- \`tests/test_bridge_v04.py\` checks initialization, Q, historical Q reset, chunk framing, bounds/CRC
+
+The original v0.4 hardware RX probe \`C83RX\` was physically verified:
+128 bytes accepted, LAST=7F, XOR=00 and KEY increased **during** transmission.
+That verifies the underlying receive-assist approach, not this integrated chat app.
+
+### Protocol v0.4
+
+The v0.4 chat client is **NOT wire-compatible** with either the v0.3.2 Python
+bridge or \`probe_v04.py\`. Run exactly \`bridge_v04.py\`.
+
+Client → PC:
+- \`S\` initial sync, respond with newest **at most six rows**.
+- \`F SEQ DIR START:u32le COUNT XOR\` bounded fetch (9 bytes).
+- \`Q LENGTH ASCII LATEST\` user question plus one byte (0/1) indicating
+  whether client currently holds the newest history.
+
+PC → Client:
+- \`C SEQ START:u32le COUNT FLAGS COUNT×12 ASCII XOR\`.
+- \`SEQ=0\` for S/Q, or the requested sequence number for F.
+- \`COUNT=0..6\`; zero count is only legal if FLAGS contains RESET.
+- FLAGS bit0=older rows exist; bit1=newer rows exist; bit2=replace active cache.
+- For a latest-page \`HELLO\` / \`WORLD\`, append only the two new rows.
+  For lengthy DEMO responses or asking from old history, send a RESET frame of
+  the newest six lines. The SQLite conversation continues to store everything.
+
+Port 00h RX hardware assist is enabled after the client's short outbound
+command completes. During the whole reply the main loop polls port 00h/05h
+and \`_GetCSC\`, so UP/DOWN can move inside cached rows while six-row frames
+arrive. The received frame is staged (max 81 bytes), checksum checked, and
+applied as a single logical ring update.
+
+Prefetch triggers on entering the upper/lower third of the 24-row cache,
+depending on the most recent scroll direction. The client computes a safe
+prefetch size \`1..6\`, bounded by free capacity plus rows that would not
+overwrite the currently visible six-line viewport. Reversing direction
+during a transfer may cause a validated frame to be discarded rather than
+overwriting the user's selection. Only one request is in flight.
+
+**Current limitations:** the input editor still uses ROM \`_GetKey\`,
+so entering INPUT is deferred until the in-flight prefetch completes.
+Sending Q/F uses a short blocking ROM \`_SendAByte\`. Received bytes and
+scrolling are cooperative, not interrupt-driven. This is an experimental
+prototype; future work should include robust timeouts, cancellation/credit
+ACK, rolling checksum stronger than XOR, debouncing and smoothing.
+
+### Hardware smoke test — when CI has passed
+
+1. Download the v0.4 CI artifact \`C83V4.8xp\`, not \`C83RX.8xp\`.
+2. Transfer it via TiLP, then close TiLP so COM2 is free.
+3. Place \`bridge_v04.py\`, \`bridge_v03.py\`, and \`prefetch_v04.py\` from
+   branch \`feat/v04-cooperative-link\` together in e.g. Downloads.
+4. Start \`py "$HOME\Downloads\bridge_v04.py" --port COM2 --db "$HOME\Downloads\chat83_v04_trial.sqlite3"\`
+   (using a new database for first smoke tests protects prior conversations).
+5. Run \`Asm(prgmC83V4)\` on the ORIGINAL TI-83 Plus. The client starts with an
+   initial six-row sync. Watch PowerShell for \`SYNC -> 0 rows\` and LCD
+   \`NO HISTORY\`.
+6. ENTER, type HELLO, ENTER. Expect a two-row \`Q 'HELLO'\` response and the
+   same YOU/PC content as previous versions; short frames should finish
+   within a few seconds at this conservative 55ms/byte pacing.
+7. Type DEMO to create long history. Scroll upward and back downward while
+   PowerShell logs FETCH OLDER/NEWER. The UI must respond to UP/DOWN while a
+   FETCH is still transmitting. Some off-cache rows may remain unavailable
+   until the chunk arrives; do not expect zero latency for uncached text.
+8. Press CLEAR to exit. If the UI shows LINK ERROR, note PC log, LCD state,
+   and last successful request; restart Python and calculator together.
+
+**Do not merge the integrated v0.4 client to main until this device smoke test
+and longer stress tests pass.**
