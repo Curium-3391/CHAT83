@@ -112,8 +112,8 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(fmt.feed("HEL"), [])
         first = fmt.feed("LO WORLD")
         self.assertEqual(first, ["PC: HELLO WO"])
-        self.assertEqual(fmt.feed("RLD"), [])
-        self.assertEqual(fmt.finish(), ["RLD".ljust(12)])
+        self.assertEqual(fmt.feed("!"), [])
+        self.assertEqual(fmt.finish(), ["RLD!".ljust(12)])
 
     def test_unicode_and_newline(self):
         fmt = StableRows()
