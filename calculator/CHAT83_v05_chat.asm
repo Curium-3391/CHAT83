@@ -688,6 +688,13 @@ poll_keys:
     ret z
     ld a,b
     ld (last_key),a
+    ld a,(input_mode)
+    or a
+    jr z,history_key
+    ld a,b
+    jp input_key
+history_key:
+    ld a,b
     cp skClear
     jr z,request_exit
     ld a,(error_flag)
@@ -706,6 +713,9 @@ request_exit:
     ld (exit_flag),a
     ret
 request_input:
+    ld a,(busy_flag)
+    or a
+    ret nz                 ; Only one model response may be active.
     ld a,1
     ld (pending_enter),a
     ret
@@ -787,8 +797,8 @@ try_newer:
     ld c,a
     ld a,b
     sub c
-    cp 9
-    ret nc                  ; selected more than eight rows from end
+    cp 17
+    ret nc                  ; fetch ahead at the last one-third of 48 rows
     ld a,(cache_count)
     ld b,a
     ld a,CACHE_ROWS
@@ -819,8 +829,8 @@ try_older:
     and 1
     ret z
     ld a,(cursor_off)
-    cp 9
-    ret nc                  ; selected beyond oldest one-third
+    cp 17
+    ret nc                  ; fetch ahead at first one-third of 48 rows
     ld a,(cache_count)
     ld b,a
     ld a,CACHE_ROWS
@@ -946,6 +956,71 @@ reset_receiver_state:
     ld (rx_pos),a
     ld (crc_state),a
     ld (rx_expected),a
+    ret
+
+; Cooperative live-update polling. F is only sent for history navigation;
+; U appends generated assistant rows from SQLite without resetting UI.
+; A Z80 keyboard scan is made every loop, even while U is in flight.
+poll_live:
+    ld a,(request_kind)
+    or a
+    ret nz
+    ld a,(busy_flag)
+    or a
+    jr nz,live_status_ok
+    ld a,(page_flags)
+    and 2
+    ret z
+live_status_ok:
+    ld a,(cache_count)
+    or a
+    ret z
+    dec a
+    ld b,a
+    ld a,(cursor_off)
+    cp b
+    ret nz
+    ld hl,(poll_timer)
+    inc hl
+    ld (poll_timer),hl
+    ld a,h
+    cp 8                   ; bounded quiet period between U probes
+    ret c
+    xor a
+    ld (poll_timer),a
+    ld (poll_timer+1),a
+    call send_update
+    ret
+
+send_update:
+    ld a,'U'
+    ld (update_wire),a
+    ld hl,cache_start
+    ld de,calc_addr
+    ld bc,4
+    ldir
+    ld hl,calc_addr
+    ld a,(cache_count)
+    call add_u32
+    ld hl,calc_addr
+    ld de,update_wire+1
+    ld bc,4
+    ldir
+    xor a
+    ld (crc_state),a
+    ld hl,update_wire
+    ld b,5
+    call crc8_buffer
+    ld a,(crc_state)
+    ld (update_wire+5),a
+    call disable_rx
+    ld hl,update_wire
+    ld a,6
+    call send_bytes
+    ld a,'U'
+    ld (request_kind),a
+    call reset_receiver_state
+    call enable_rx
     ret
 
 ; ---- Input (only entered when no frame is inflight) -------------------
@@ -1104,6 +1179,23 @@ draw_history:
     call set_row
     ld hl,history_help
     bcall(_PutS)
+    ld a,(model_error)
+    or a
+    jr nz,show_model_error
+    ld a,(busy_flag)
+    or a
+    jr z,history_no_state
+    ld a,11
+    ld (curCol),a
+    ld hl,live_label
+    bcall(_PutS)
+    jr history_no_state
+show_model_error:
+    ld a,11
+    ld (curCol),a
+    ld hl,err_label
+    bcall(_PutS)
+history_no_state:
     ld a,(cache_count)
     or a
     jr nz,draw_rows
@@ -1157,6 +1249,8 @@ error_text:     .db "LINK ERROR",0
 exit_help:      .db "CLEAR: EXIT",0
 empty_text:     .db "NO HISTORY",0
 history_help:   .db "ENTER:ASK",0
+live_label:     .db "AI",0
+err_label:      .db "ERR",0
 ask_title:      .db "CHAT83 INPUT",0
 ask_label:      .db "YOU:",0
 blank13:        .db "             ",0
