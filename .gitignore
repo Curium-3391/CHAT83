@@ -17,3 +17,7 @@ Thumbs.db
 *.8xp
 *.lst
 *.map
+
+# Local conversation databases (may contain private transcripts)
+*.sqlite3
+*.sqlite3-*
