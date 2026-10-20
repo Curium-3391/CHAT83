@@ -37,6 +37,10 @@ static uint8_t wireIn[MAX_WIRE];
 static uint8_t wireUsed = 0;
 static bool wireOverflow = false;
 static uint8_t txQueue[MAX_TX];
+// UART R frames are larger than the forwarded calculator byte.
+// Decouple complete TI bytes from USB serial transmitter capacity.
+static uint8_t calcQueue[64];
+static uint8_t calcHead = 0, calcTail = 0, calcUsed = 0;
 static uint8_t txSize = 0;
 static uint8_t txIndex = 0;
 static uint8_t txSeq = 0;
@@ -113,8 +117,25 @@ static void errorEvent(uint8_t code) {
   sendPacket(msg, 2);
 }
 static void deliverCalcByte(uint8_t byte) {
-  const uint8_t msg[] = {'R', byte};
-  sendPacket(msg, 2);
+  if (calcUsed < sizeof(calcQueue)) {
+    calcQueue[calcTail] = byte;
+    calcTail = (uint8_t)((calcTail + 1) & 63);
+    ++calcUsed;
+  } else {
+    // This is a hard protocol failure, never silently truncate a question.
+    errorEvent(6);
+  }
+}
+static void flushCalcQueue() {
+  // A 'R'+byte UART packet takes only 5 bytes with COBS/CRC. Never enter
+  // Serial.write() while its USB serial TX buffer is full and the calculator
+  // might already be handshaking the next bit.
+  if (calcUsed && Serial.availableForWrite() >= 8) {
+    const uint8_t msg[] = {'R', calcQueue[calcHead]};
+    sendPacket(msg, 2);
+    calcHead = (uint8_t)((calcHead + 1) & 63);
+    --calcUsed;
+  }
 }
 
 // Decode COBS input (without delimiter) in place.
@@ -278,6 +299,7 @@ void setup() {
   lastByteAt = micros();
 }
 void loop() {
-  pollLink();  // Highest priority: open-drain bit handshake.
-  pollHost();  // Read at most eight UART bytes per loop.
+  pollLink();        // Highest priority: open-drain bit handshake.
+  pollHost();        // Read at most eight UART bytes per loop.
+  flushCalcQueue();  // Asynchronous TI-to-PC delivery, never block on USB.
 }
