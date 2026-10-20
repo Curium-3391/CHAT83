@@ -1,4 +1,4 @@
-"""CHAT83 v0.3 experimental PC bridge with persistent remote history.
+"""CHAT83 v0.3.1 experimental PC bridge with persistent remote history.
 
 No LLM API in this release. Python 3.9+ and pyserial required.
 """
@@ -94,7 +94,7 @@ class Conversation:
     def total_lines(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM display_lines").fetchone()[0]
 
-    def _page(self, start: int, viewport: int) -> tuple[int, list[str]]:
+    def _page(self, start: int, viewport: int) -> tuple[int, list[str], int]:
         total = self.total_lines()
         last_start = max(0, total - PAGE_SIZE)
         self.page_start = max(0, min(start, last_start))
@@ -102,20 +102,23 @@ class Conversation:
             "SELECT text FROM display_lines ORDER BY id LIMIT ? OFFSET ?",
             (PAGE_SIZE, self.page_start)).fetchall()]
         max_view = max(0, len(rows) - SCREEN_ROWS)
-        return max(0, min(viewport, max_view)), rows
+        # Bit 0: older content exists; bit 1: newer content exists.
+        flags = (1 if self.page_start > 0 else 0)
+        flags |= (2 if self.page_start + len(rows) < total else 0)
+        return max(0, min(viewport, max_view)), rows, flags
 
-    def sync(self) -> tuple[int, list[str]]:
+    def sync(self) -> tuple[int, list[str], int]:
         return self._page(max(0, self.total_lines() - PAGE_SIZE),
                           PAGE_SIZE - SCREEN_ROWS)
 
-    def older(self) -> tuple[int, list[str]]:
+    def older(self) -> tuple[int, list[str], int]:
         old_start = self.page_start
         if old_start == 0:
             return self._page(0, 0)
         new_start = max(0, old_start - PAGE_STEP)
         return self._page(new_start, old_start - 1 - new_start)
 
-    def newer(self) -> tuple[int, list[str]]:
+    def newer(self) -> tuple[int, list[str], int]:
         old_start = self.page_start
         last_start = max(0, self.total_lines() - PAGE_SIZE)
         if old_start >= last_start:
@@ -123,14 +126,16 @@ class Conversation:
         new_start = min(last_start, old_start + PAGE_STEP)
         return self._page(new_start, old_start + PAGE_STEP + 1 - new_start)
 
-    def ask(self, question: str) -> tuple[int, list[str]]:
+    def ask(self, question: str) -> tuple[int, list[str], int]:
         save_message(self.db, "user", question)
         save_message(self.db, "assistant", demo_reply(question))
         return self.sync()
 
 
-def encode_page(page: tuple[int, list[str]]) -> bytes:
-    viewport, rows = page
+def encode_page(page: tuple[int, list[str], int]) -> bytes:
+    viewport, rows, flags = page
+    if not 0 <= flags <= 3:
+        raise ValueError("invalid paging flags")
     if not 0 <= len(rows) <= PAGE_SIZE:
         raise ValueError("invalid row count")
     if not 0 <= viewport <= max(0, len(rows) - SCREEN_ROWS):
@@ -138,7 +143,7 @@ def encode_page(page: tuple[int, list[str]]) -> bytes:
     chunks = [row.encode("ascii", "replace") for row in rows]
     if any(len(row) != ROW_WIDTH for row in chunks):
         raise ValueError("all display rows must be exactly 12 bytes")
-    return b"P" + bytes([len(rows), viewport]) + b"".join(chunks)
+    return b"P" + bytes([len(rows), viewport, flags]) + b"".join(chunks)
 
 
 def paced_write(ser, packet: bytes, delay: float) -> None:
@@ -177,11 +182,11 @@ def handle_command(ser, conversation: Conversation, command: bytes,
     # Brief time for the Z80 client to enter _RecAByteIO.
     time.sleep(0.15)
     paced_write(ser, packet, delay)
-    return f"{description} -> {packet[1]} rows, view={packet[2]}"
+    return f"{description} -> {packet[1]} rows, view={packet[2]}, flags={packet[3]}"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CHAT83 v0.3 persistent history bridge")
+    parser = argparse.ArgumentParser(description="CHAT83 v0.3.1 persistent history bridge")
     parser.add_argument("--port", default="COM2", help="Arduino USB serial port")
     parser.add_argument("--baud", type=int, default=9600)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -195,7 +200,7 @@ def main() -> None:
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with db_connect(args.db) as db:
         conversation = Conversation(db)
-        print(f"CHAT83 v0.3 EXPERIMENTAL | COM={args.port} | DB={args.db}")
+        print(f"CHAT83 v0.3.1 EXPERIMENTAL | COM={args.port} | DB={args.db}")
         with serial.Serial(args.port, args.baud, timeout=5,
                            write_timeout=5) as ser:
             time.sleep(2.5)  # Uno resets after opening COM
