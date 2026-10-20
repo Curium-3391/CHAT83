@@ -29,11 +29,13 @@ start:
     ld (last_key),a
     ld (pending_enter),a
     ld (error_flag),a
+    ld (exit_flag),a
     ld (sequence),a
     ld (cache_start),a
     ld (cache_start+1),a
     ld (cache_start+2),a
     ld (cache_start+3),a
+    ld (evicted_flag),a
     ld a,0FFh                  ; initially prefetch older after SYNC
     ld (direction),a
     call draw_loading
@@ -159,6 +161,8 @@ packet_error:
 ; Fixed six-row frame commit. All header and checksum checks before modifying
 ; ring data; repeated row payload bytes remain only in RX staging buffer.
 commit_frame:
+    xor a
+    ld (evicted_flag),a
     ld a,(request_kind)
     cp 'F'
     jr nz,non_fetch_frame
@@ -293,10 +297,14 @@ older_head_dec:
     ld (cache_head),a
     ld a,(cache_count)
     cp 24
-    jr z,older_full
+    jr nz,older_has_space
+    ld a,2
+    ld (evicted_flag),a
+    jr older_not_evict
+older_has_space:
     inc a
     ld (cache_count),a
-older_full:
+older_not_evict:
     ld a,(cursor_off)
     inc a
     ld (cursor_off),a
@@ -312,7 +320,7 @@ older_done:
     ld de,cache_start
     ld bc,4
     ldir
-    jp apply_flags_nodraw
+    jp apply_fetch_flags
 
 ; New lines append, evict oldest only when not on visible screen.
 commit_newer:
@@ -363,6 +371,8 @@ newer_loop:
     ld a,(cache_count)
     cp 24
     jr nz,have_append_space
+    ld a,1
+    ld (evicted_flag),a
     ld a,(cache_head)
     inc a
     cp 24
@@ -394,7 +404,7 @@ have_append_space:
 newer_done:
     ld a,(request_kind)
     cp 'Q'
-    jr nz,apply_flags_nodraw
+    jp nz,apply_fetch_flags
     ld a,(cache_count)
     or a
     jr z,apply_flags_draw
@@ -416,6 +426,42 @@ discard_prefetch:
     xor a
     ld (request_kind),a
     ld (direction),a
+    ret
+
+apply_fetch_flags:
+    ld a,(pending_dir)
+    or a
+    jr z,apply_newer_flags
+    ; Fetching OLDER: trust response's older flag, retain existing newer
+    ; boundary and set newer when old tail rows were evicted.
+    ld a,(rx_frame+7)
+    and 1
+    ld b,a
+    ld a,(page_flags)
+    and 2
+    or b
+    ld b,a
+    ld a,(evicted_flag)
+    or b
+    ld (page_flags),a
+    xor a
+    ld (request_kind),a
+    ret
+apply_newer_flags:
+    ; Fetching NEWER: retain existing older boundary and set older if head
+    ; rows were evicted. Newer boundary comes from fetched chunk end.
+    ld a,(rx_frame+7)
+    and 2
+    ld b,a
+    ld a,(page_flags)
+    and 1
+    or b
+    ld b,a
+    ld a,(evicted_flag)
+    or b
+    ld (page_flags),a
+    xor a
+    ld (request_kind),a
     ret
 
 apply_flags_draw:
@@ -1013,6 +1059,7 @@ direction:      .db 0
 pending_dir:    .db 0
 fetch_count:    .db 0
 safe_space:     .db 0
+evicted_flag:   .db 0
 sequence:       .db 0
 expect_seq:     .db 0
 stage_index:    .db 0
