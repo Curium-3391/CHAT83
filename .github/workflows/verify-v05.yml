@@ -24,6 +24,17 @@ jobs:
         run: python -m compileall -q bridge tests
       - name: Full regression plus v0.5 transport and LLM tests
         run: PYTHONPATH=bridge python -m unittest discover -s tests -v
+  link-handshake-mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Simulate real Uno firmware against TI open-drain bit handshake
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -I tests/avr_mock \
+            tests/avr_mock/test_uno_rx.cpp -o build/test_uno_rx
+          ./build/test_uno_rx
+
   uno:
     runs-on: ubuntu-latest
     steps:
@@ -62,7 +73,7 @@ jobs:
           path: build/C83V5.8xp
 
   package:
-    needs: [python, uno, z80]
+    needs: [python, uno, z80, link-handshake-mock]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
