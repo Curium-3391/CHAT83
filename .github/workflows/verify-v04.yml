@@ -45,3 +45,12 @@ jobs:
           path: |
             build/C83RX.8xp
             build/C83V4.8xp
+      - name: Prepare integrated chat test kit
+        run: |
+          mkdir -p build/v04-hardware-test-kit
+          cp build/C83V4.8xp bridge/bridge_v04.py bridge/bridge_v03.py bridge/prefetch_v04.py docs/v04-cooperative-link.md build/v04-hardware-test-kit/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v04-chat-hardware-test-kit
+          path: build/v04-hardware-test-kit/
+
