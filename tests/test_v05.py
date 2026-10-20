@@ -186,10 +186,17 @@ class EngineTests(unittest.TestCase):
                 x = self.b[:size]
                 del self.b[:size]
                 return bytes(x)
-        response, label, retry = self.engine.dispatch(Bytes(b"\x05HELLO\x01"), b"Q")
+        request = b"Q\x05HELLO\x01"
+        response, label, retry = self.engine.dispatch(
+            Bytes(request[1:] + bytes([crc8(request)])), b"Q")
         self.assertEqual(label, "Q 'HELLO'")
         self.assertFalse(retry)
         self.assertGreaterEqual(len(decode_chunk(response).rows), 1)
+        corrupted = request[1:] + bytes([crc8(request) ^ 1])
+        before = self.engine.total()
+        with self.assertRaisesRegex(ValueError, "CRC8"):
+            self.engine.dispatch(Bytes(corrupted), b"Q")
+        self.assertEqual(self.engine.total(), before)
 
 
 if __name__ == "__main__":
