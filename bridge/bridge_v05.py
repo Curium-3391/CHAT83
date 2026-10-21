@@ -91,6 +91,9 @@ class ConversationEngine:
         self.row_builder = None
         self.last_reply = b""
         self.retry_count = 0
+        # Track duplicate obsolete R frames across serial reconnects.
+        # Do not confuse them with active application CRC retries.
+        self.stale_retry_count = 0
         self.last_activity = time.monotonic()
 
     def total(self) -> int:
@@ -234,14 +237,31 @@ class ConversationEngine:
         # calculator has pulled at the instant a cancel is requested.
         return self.sync()
 
-    def reply_retry(self, data: bytes):
-        seq = decode_retry(data)
+    def reply_retry(self, data: bytes) -> bytes | None:
+        """Retry only a C frame known to THIS bridge session.
+
+        The TI-83 Plus can retain its in-flight request over ON/OFF while
+        COM2 / Windows Python has restarted and lost its last_reply. The
+        calculator then sends a valid three-byte R, but the bridge cannot
+        recreate a safe F response from R's sequence alone (START is absent).
+        Silently replying with SYNC would violate the calculator's expected
+        SEQ / START and can corrupt its cache. Instead leave the bridge
+        listening: the calculator eventually shows its recoverable error;
+        MODE triggers a new S and loads intact SQLite history.
+        """
+        seq = decode_retry(data)  # still reject malformed or bad-CRC R
         if not self.last_reply or self.last_reply[1] != seq or self.retry_count >= 3:
-            raise ValueError("cannot retry unknown/exhausted frame")
+            self.stale_retry_count += 1
+            if self.stale_retry_count <= 3 or self.stale_retry_count % 16 == 0:
+                print(f"[RESYNC NEEDED] Ignored stale/unknown R seq={seq}; "
+                      "no matching reply in this PC session. "
+                      "On TI, press MODE at LINK ERROR to SYNC (or restart "
+                      "CHAT83); saved SQLite history is unchanged.", flush=True)
+            return None
         self.retry_count += 1
         return self.last_reply
 
-    def dispatch(self, ser, first: bytes) -> tuple[bytes, str, bool]:
+    def dispatch(self, ser, first: bytes) -> tuple[bytes | None, str, bool]:
         if first == b"S":
             return self.sync(), "SYNC", False
         if first == b"F":
@@ -296,6 +316,12 @@ def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False,
             engine.drain()
             continue
         packet, label, is_retry = engine.dispatch(link, incoming)
+        if packet is None:
+            # An R from a previous session has no safe response payload.
+            # Never close COM2 or send a fabricated C frame; await fresh S.
+            engine.drain()
+            streak = 0
+            continue
         if adaptive:
             if is_retry:
                 streak = 0
