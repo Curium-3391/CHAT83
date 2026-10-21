@@ -32,10 +32,13 @@ CRC8 covers the type and payload; no escaping of data beyond COBS.
 | Uno→PC | H | major=0, minor=5, max_batch=16 | Version hello |
 | PC→Uno | G | gap_ms 2..50 | Configure physical byte gap |
 | Uno→PC | A | seq=0,status=0 | Confirm gap |
+| PC→Uno | D | on (0 or 1) | Enable/disable link diagnostics (`--debug-link`) |
+| Uno→PC | A | seq=0,status=0 | Confirm diagnostics setting |
 | PC→Uno | T | seq 1..255,count 1..16, count bytes | Transmit byte batch to TI |
 | Uno→PC | A | seq,status | Sent all bytes / error code |
 | Uno→PC | R | one byte | Byte received from TI |
 | Uno→PC | E | reason | Unexpected hardware/protocol error |
+| Uno→PC | J | 13 bytes, see below | Link diagnostics, every 500 ms while D=1 |
 
 UNO ACK statuses: 0=OK all bytes, 1=physical timeout, 2=busy,
 3=malformed, E error class 1=bad CRC, 2=unknown/invalid host frame,
@@ -43,6 +46,12 @@ UNO ACK statuses: 0=OK all bytes, 1=physical timeout, 2=busy,
 overflow. A batch must finish before the next T; the application aborts on
 uncertain partial delivery, because repeating arbitrary partial link bytes
 would be unsafe without a resync.
+
+`J` payload (all u16 little-endian, free-running snapshots):
+`rx_starts, rx_acked_bits, rx_bytes, rx_timeouts, tx_timeouts` (5×u16),
+then `state` (0 IDLE, 1 RX_WAIT_RELEASE, 2 RX_ACK_SETTLE, 3 TX_WAIT_ACK,
+4 TX_WAIT_RELEASE), `levels` (bit0 TIP high, bit1 RING high) and the last
+received TI byte. The bridge prints it as a `[UNO-DIAG]` line.
 
 UNO `R` packets use a separate 64-byte queue to prevent USB
 `Serial.write` back-pressure from blocking the TI bit handshake.

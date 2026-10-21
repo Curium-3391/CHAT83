@@ -7,10 +7,11 @@
 
 ; CHAT83 v0.5 EXPERIMENTAL -- original TI-83 Plus only
 ; Nonblocking port-0 RX assist, cooperative _GetCSC, predictive row prefetch.
-; Protocol only for new Arduino Uno v0.5 + bridge_v05.py.
-; Requires bridge/bridge_v04.py, six-row C frames.
+; Protocol only for new Arduino Uno v0.5 + bridge_v05.py (docs/v05-wire-protocol.md).
+; Not compatible with serial2ti83, bridge_v03.py or bridge_v04.py.
 ;
-; Frame: C SEQ START0 START1 START2 START3 COUNT FLAGS ROWS XOR
+; Frame: C SEQ START0 START1 START2 START3 COUNT FLAGS ROWS CRC8
+; CRC8 poly 07h, init 00h, over every preceding byte from 'C'.
 ; FLAGS 1=older, 2=newer, 4=RESET, 8=LLM_BUSY, 16=LLM_ERR. MAX 6 rows per frame.
 ; Active ring 48*13 bytes, staging received frame 81 bytes.
 ; UI keeps selected/visible rows anchored when prefetch commits.
@@ -266,7 +267,8 @@ crc8_no_poly:
     ld (crc_state),a
     pop bc
     ret
-; HL pointer, B length; updates crc_state, preserves HL and B at return.
+; HL pointer, B length; updates crc_state. Returns HL past the buffer and
+; B=0; DE and C are preserved.
 crc8_buffer:
 crc8_buffer_loop:
     ld a,(hl)
@@ -1171,7 +1173,7 @@ seq_ready:
     xor a
     ld (crc_state),a
 wire_checksum:
-    ; Placeholder replaced by CRC8 buffer below.
+    ; CRC8 over F SEQ DIR START0..3 COUNT (8 bytes).
     ld a,(hl)
     call crc8_update
     inc hl
