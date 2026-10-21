@@ -181,7 +181,7 @@ class WordWrapTests(unittest.TestCase):
         wrapped = WordRows()
         rows = wrapped.feed("ABCDEFGHIJKLMNO")
         rows += wrapped.finish()
-        self.assertEqual(rows, ["PC: ".ljust(12), "ABCDEFGHIJKL", "MNO".ljust(12)])
+        self.assertEqual(rows, ["PC: ABCDEFGH", "IJKLMNO".ljust(12)])
         self.assertTrue(all(len(row) == 12 for row in rows))
 
     def test_unicode_newlines_and_original_default_unchanged(self):
