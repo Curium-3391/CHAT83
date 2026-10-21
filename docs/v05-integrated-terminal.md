@@ -382,3 +382,39 @@ py "$HOME\\Downloads\\CHAT83_v05\\bridge_v05.py" --port COM2 --provider demo --g
 注意：250ms 是暫時診斷參數，預設仍是 0；若有效，
 應正式修正計算機端「接收時不可重畫完整 LCD」的時序，
 不能把人工延遲視為最終可靠性解決方案。
+
+
+### 2026-10-21 實機 250ms 成功驗證：SYNC 與 HELLO 的 Link 往返完成
+
+使用者依照上述命令測試了正確接線 **TIP=D3、RING=D6** 與
+`--reply-delay-ms 250 --gap-ms 35 --debug-link`，第一次觀察到
+**兩組實際 PC→TI 回覆完全送完，且 TI→PC 完整接收 Q 'HELLO'**：
+
+```text
+[TX-BEGIN] SYNC: 45 bytes (3 batches), turnaround=250ms
+[UNO-DIAG] start=8 ack=8 rx_bytes=1 rx_to=0 tx_to=0 state=0 TIP=H RING=H last_rx=0x53
+SYNC -> 3 rows, flags=04, 45 bytes
+[TX-BEGIN] Q 'HELLO': 33 bytes (3 batches), turnaround=250ms
+[UNO-DIAG] start=80 ack=80 rx_bytes=10 rx_to=0 tx_to=0 state=0 TIP=H RING=H last_rx=0xDE
+Q 'HELLO' -> 2 rows, flags=01, 33 bytes
+Uno link statistics: {'tx': 78, 'rx': 10, 'errors': 0, 'gap_ms': 35, 'rx_timeout_events': 0}
+Stopped
+```
+
+**計數解釋：** PC→TI 成功確認傳送 45+33=78 bytes；
+TI→PC 完成 1-byte S 與 9-byte Q（Q、LEN、5-byte HELLO、
+LATEST、CRC8），共 10 bytes，80 次 bit-start 和 ACK 配對。
+USB、Uno 以及實體 Link 傳送層在這一次測試**沒有回報錯誤**。
+`SYNC` 帶 3 行歷史表示 SQLite 中已有先前對話；不是異常。
+
+**尚未在使用者畫面確認：** 計算機是否正確解析 C frame 並顯示
+`PC: WORLD`，以及連續提問、長答、捲動、重試功能是否可靠。
+「整條傳輸鏈有一次正確完成」不等於 UI/應用層全部實機驗收通過。
+尤其這是 **帶 250ms turnaround 的單次成功**，
+還不能斷言時間延遲就是唯一根因，也不應刪除這個參數或直接
+將 PR #7 合併 main。
+
+**下一步：** 保持所有韌體與現有延遲設定不變，先確認 TI 顯示
+`PC: WORLD`，再重複 HELLO 與其他簡短問題測穩定度。
+如 UI 確認正確，才比較 `--reply-delay-ms 250`、100、0 的結果，
+並研究 Z80 `input_send` 畫面重繪是否讓接收緩衝溢位。
