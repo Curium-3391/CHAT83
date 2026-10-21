@@ -55,11 +55,50 @@ Existing `C83V5.8xp` / `CHAT83.8xk` and Uno firmware remain unchanged.
 ## Verification status
 
 Unit tests mock the SDK and verify role translation, streaming,
-dependency/key handling and provider registration. **Real Gemini API
-calls have not been run by CI** (no credentials available). Physical
-Gemini-on-calculator generation requires the user's own API key and
-real-device testing.
+dependency/key handling and provider registration. **CI does not call the
+real Gemini API** and does not have credentials.
 
-Code change is intentionally isolated on `feat/v06-gemini-provider`, a new
-PR against `main`. Do **not** claim Gemini hardware/API validation merely
-because the established demo test succeeded.
+**2026-10-21 user-confirmed real hardware milestone:** The user reported
+Gemini working on the original TI-83 Plus and provided a Windows Bridge
+log proving real `--provider gemini` requests with streaming `UPDATE`
+frames on the TI Link, including two successive prompts. See the trace
+below. This confirms an initial real-device Gemini session, but it does
+not yet establish LCD character-perfect display, long-term stability,
+every model variant, or provider cost limits.
+
+Code change remains isolated on `feat/v06-gemini-provider`, a PR
+against `main`. **Do not merge until the user explicitly approves.**
+
+### Gemini real-device log (2026-10-21)
+
+Windows `COM2`, `--provider gemini --model gemini-3.5-flash-lite`,
+`--gap-ms 35 --reply-delay-ms 250 --debug-link`, physical Uno
+`TIP=D3, RING=D6`:
+
+```text
+CHAT83 Uno v0.5 handshake OK; gap 35ms
+SYNC -> 0 rows, flags=04, 9 bytes
+Q 'HELLO' -> 1 rows, flags=08, 21 bytes
+UPDATE @1 -> 2 rows, flags=09, 33 bytes
+UPDATE @3 -> 1 rows, flags=01, 21 bytes
+Q 'HOW ARE YOU' -> 2 rows, flags=09, 33 bytes
+UPDATE @6 -> 6 rows, flags=03, 81 bytes
+UPDATE @12 -> 1 rows, flags=01, 21 bytes
+Uno link statistics: {'tx': 228, 'rx': 55, 'errors': 0, 'gap_ms': 35, 'rx_timeout_events': 0}
+Stopped
+```
+
+The user described the test as successful (`有了耶`). Consecutive
+calculator `Q` requests and subsequent streamed `U` requests reached
+the PC; all printed confirmed reply batches completed. `BUSY=0x08`
+was present while generation was ongoing and absent in the final frames.
+The longest visible reply was 81 bytes (six rows). Uno bit counters
+reached `start=440`, `ack=440`, `rx_bytes=55`, with
+`rx_to=0`, `tx_to=0`, `errors=0`.
+
+Notably one `[TX-BEGIN] UPDATE @1: 9 bytes` event did not have its own
+matching completion log in the supplied excerpt before the next
+`UPDATE @1` request; do not interpret every `TX-BEGIN` as a
+completed frame. The successful subsequent `UPDATE @1` and final
+counters establish the tested transport's progress.
+
