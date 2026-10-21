@@ -114,7 +114,7 @@ The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating
 ## Experimental v0.4 and v0.5
 
 - **v0.4** (`C83V4`, `bridge_v04.py`, upstream serial2ti83): non-blocking receive through the original TI-83 Plus Port 00h/05h receive assist, `_GetCSC` keyboard polling and a 48-row predictive cache. See [v04-cooperative-link.md](docs/v04-cooperative-link.md).
-- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Not working on hardware yet**: Uno reported RX timeout E5; the user's actual wiring is TIP=D3 / RING=D6 (not upstream TIP=D2 / RING=D3). Use `--debug-link` with current Python codec for post-error counters. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
+- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Partial hardware success confirmed 2026-10-21**: with the user's actual TIP=D3 / RING=D6 wiring and `--reply-delay-ms 250 --gap-ms 35`, physical TI→PC `S` and `Q 'HELLO'` completed, and PC→TI two reply frames (45+33=78 bytes) were fully acknowledged with zero errors. The calculator screen's `PC: WORLD` display has **not yet been confirmed**; do not mark v0.5 fully hardware verified. Earlier without turnaround delay Uno TX failed, so timing stability remains under investigation. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
 
 Both run on the **original TI-83 Plus only**; port 05h means something different on the TI-83 Plus SE and TI-84 Plus.
 
@@ -123,7 +123,7 @@ Both run on the **original TI-83 Plus only**; port 05h means something different
 - Verify the history/scrolling prototype against SPASM-ng and real TI-83 Plus hardware.
 - Improve LCD input UX and longer messages.
 - Implement resilient packets with acknowledgments / retransmission.
-- Get the v0.5 Uno ↔ TI link working on hardware (`ERR:LINK`), then validate the LLM terminal end to end. API credentials stay on the PC, never on the calculator.
+- Complete v0.5 real-device validation: TI→PC `S`/`Q 'HELLO'` and 45/33-byte PC→TI responses now successfully handshake with 250ms host turnaround, but calculator display, repeatability, reduced delay and streaming UI remain unverified. API credentials stay on the PC.
 - Replace the PC bridge with an RP2040/ESP32-class Wi-Fi MCU later.
 
 ## Credits and license
