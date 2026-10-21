@@ -523,3 +523,52 @@ py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --mo
 ```
 
 測試完成再考慮降低回覆延遲，避免把分行 Bug 和位元握手時序混為一談。
+
+
+#### 2026-10-21 第二階段真機回報：FETCH OLDER @1 (6) 的 TX_WAIT_ACK
+
+使用者回報（新 App／250ms turnaround、35ms inter-byte gap）
+在上捲讀取 SQLite 較舊紀錄時：
+
+```text
+[TX-BEGIN] FETCH OLDER @1 (6): 81 bytes (6 batches), turnaround=250ms
+[UNO-DIAG] start=248 ack=248 rx_bytes=31 rx_to=0 tx_to=0 state=3 TIP=L RING=H last_rx=0x19
+Uno link statistics: {'tx': 196, 'rx': 31, 'errors': 0, 'gap_ms': 35, 'rx_timeout_events': 0}
+LINK ERROR: Uno TI TX failed at 16: b'A\\x10\\x01'
+```
+
+**已確認的物理意義：** `state=3` 是 Uno 韌體
+`TX_WAIT_ACK`。此時 Uno 在 TIP 拉低等待對方在 RING 回應，
+但目前沒有偵測到 ACK；`A seq=0x10 status=1` 是
+Uno 在 `BIT_TIMEOUT_US=50000` us 內沒等到 TI ACK。
+`at 16` 指 **81-byte reply 的第二個 16-byte USB 批次起始偏移**
+（第一批已獲 ACK）；不能說第 17 個 byte 肯定失敗，
+也不能假設 `errors=0` 意味著沒有傳送逾時
+（那是 Python `E` event 統計，與 `A status=1` 不同）。
+資料來自實機，源頭不是 Gemini API 或 Uno 物理腳位設定；
+但 **TI 為什麼沒有 ACK 尚未證明**，可能涉及接收 assist、
+歷史按鍵的 LCD 刷新、跨 batch 時序或特定負載。
+
+**暫定安全測試，不要繼續降低回覆延遲：**
+
+1. 先保留舊、已成功的 `--reply-delay-ms 250`，先把
+   `--gap-ms 35` 改成 `--gap-ms 50`，不改其他設定，
+   以同樣流程（提問兩次、按 UP 捲到上界、等 FETCH OLDER）
+   觀察是否仍於第 16 byte 批次附近失敗。
+2. 若 50 ms 仍失敗，可改用此新測試包的 Python
+   `--batch-pause-ms 150`，對每個**已成功 ACK 的 16-byte**
+   分組之間加上 150ms 休息（**不是**位元或單 byte ACK timeout
+   的自動重試）。建議先使用 `--gap-ms 35` 維持可比性：
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --batch-pause-ms 150 --debug-link
+   ```
+   在輸出中會有 `[UNO-TX] batch boundary @16: pause 150ms`。
+3. **不要同時改 250ms、35ms 和 batch pause。** 每次只調一項，
+   才能判斷改善是否有效。若再次 TX timeout，
+   應保留 `TX-BEGIN`／`UNO-DIAG`／`failed at N`，
+   並說明計算機畫面（仍在 HISTORY、顯示 LINK ERROR、或卡住）。
+   TX timeout 後需先重啟 bridge／App、必要時重同步，切勿盲目
+   重送剩餘 65 bytes；在 C reply 中途重送會破壞協定框架。
+
+`--batch-pause-ms` 預設為 0，不影響原本已確認的 Demo／Gemini
+路徑。它屬於診斷變因，不應當作已證明的根因修復。
