@@ -135,6 +135,26 @@ Both run on the **original TI-83 Plus only**; port 05h means something different
 See the [development log](docs/development-log.md) for the distinction between confirmed results and planned features.
 
 
+## Experimental Gemini API integration (new PR)
+
+Google Gemini support is developed on `feat/v06-gemini-provider` so the
+hardware-accepted v0.5 on `main` remains stable. No Arduino firmware,
+Z80 program, or Link wiring changes are necessary. The Gemini backend uses
+the official `google-genai` SDK and the existing SQLite conversation history.
+
+Get a Gemini API key through [Google AI Studio](https://aistudio.google.com/app/apikey),
+set the `GEMINI_API_KEY` **Windows user environment variable** (never
+put keys in repo/chat/logs), then use the matching experimental test kit:
+
+```powershell
+py -m pip install -r "$HOME\Downloads\CHAT83_v05\requirements-v05-gemini.txt"
+py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250
+```
+
+You can substitute `--model gemini-3.8-flash`. Neither the real Google API
+nor Gemini-on-calculator answers have been verified yet; mock tests cannot
+make external API calls. See [Gemini setup and status](docs/v06-gemini-provider.md).
+
 ## Hardware milestone: v0.5 demo accepted (2026-10-21)
 
 On the user's original TI-83 Plus and Arduino Uno with physical pins `TIP=3` / `RING=6`, Python `bridge_v05.py --port COM2 --provider demo --gap-ms 35 --debug-link --reply-delay-ms 250` completed:
