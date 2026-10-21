@@ -279,8 +279,7 @@ class Z80ClientTests(unittest.TestCase):
                 self.assertEqual(kind, ord("Q"))
                 self.assertTrue(title.startswith(" CHAT83 V0.5"), title)
                 self.assertNotIn("NEW MESSAGE", title)
-                self.assertIn("WAIT", title + hint if "WAIT" in (title + hint)
-                              else "WAIT")  # await frame marker is set
+                self.assertEqual(title[13:], "...", title)  # waiting tag
 
     def test_busy_status_and_cancel(self):
         provider = GatedProvider()
