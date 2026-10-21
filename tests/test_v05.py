@@ -84,6 +84,33 @@ class UsbTests(unittest.TestCase):
         self.assertEqual(b"".join(link.read(1) for _ in range(5)), b"HELLO")
         self.assertEqual(link.rx_count, 5)
 
+    def test_extra_pause_only_between_acknowledged_16byte_batches(self):
+        from unittest.mock import patch
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, gap_ms=35, timeout=0.02, batch_pause_ms=150)
+        link.connect()
+        payload = bytes(range(33))
+        with patch("usb_v05.time.sleep") as sleeper:
+            self.assertEqual(link.write(payload), len(payload))
+        self.assertEqual(serial.calc_sent, payload)
+        self.assertEqual(link.tx_count, 33)
+        self.assertEqual(sleeper.call_count, 2)
+        sleeper.assert_any_call(0.15)
+        self.assertEqual(link.stats()["batch_pause_ms"], 150)
+
+    def test_batch_pause_default_preserves_existing_transport(self):
+        from unittest.mock import patch
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, gap_ms=35, timeout=0.02)
+        link.connect()
+        with patch("usb_v05.time.sleep") as sleeper:
+            link.write(bytes(range(81)))
+        sleeper.assert_not_called()
+        self.assertEqual(serial.calc_sent, bytes(range(81)))
+        for invalid in (-1, 1001):
+            with self.assertRaisesRegex(ValueError, "batch_pause_ms"):
+                UnoUsb(serial, batch_pause_ms=invalid)
+
     def test_optional_link_debug_counters(self):
         import contextlib
         import io
