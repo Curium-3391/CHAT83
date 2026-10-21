@@ -86,8 +86,11 @@ class WordRows:
         if not self.word:
             return
         sep = " " if self.space_pending and self.partial and not self.partial.endswith(" ") else ""
-        # Prefer a new row instead of splitting a normal-sized word.
-        if self.partial and len(self.partial) + len(sep) + len(self.word) > 12:
+        # Prefer a new row for an ordinary word; don't waste a whole row
+        # on just the leading "PC: " prompt or on a >12-character word.
+        if (self.partial and self.partial != "PC: " and
+                len(self.word) <= 12 and
+                len(self.partial) + len(sep) + len(self.word) > 12):
             ready.append(self.partial.ljust(12))
             self.partial = ""
             sep = ""
