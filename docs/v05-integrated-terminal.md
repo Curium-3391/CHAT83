@@ -1,8 +1,8 @@
-# CHAT83 v0.5 — 整合測試候選版
+# CHAT83 v0.5 — 整合實機測試與安裝說明
 
-> **狀態：原始碼、編譯及自動化測試完成後才能交付實機驗收。尚未在使用者的 Uno + TI-83 Plus 實測此新版韌體／Z80 組合。**
+> **狀態（2026-10-21）：真機已驗證一輪 demo 問答！** TI-83 Plus 上實際看到 `PC: WORLD`，Windows 收到 `Q 'HELLO'`，而 SYNC 與 Q 回覆都由 Uno 確認完成 45 + 33 bytes 傳輸，零回報錯誤。使用者已批准合併 v0.5。
 >
-> 穩定版仍是 main 上的 v0.3.2；v0.4 是實機驗證的合作式 RX / 48 行快取版本。本 v0.5 分支不覆蓋它們。
+> **目前有效實機設定：** Uno TIP=D3、RING=D6、GND=sleeve，COM2／115200 baud，`--provider demo --gap-ms 35 --reply-delay-ms 250`。這不代表 250ms 可省略，也不代表重複長時間測試、長答與實際 OpenAI/Ollama 已完成。以下「尚未驗證／Draft」字句若位於較早期的診斷紀錄，請視為當時狀態，非現在的專案總結。
 
 ## 架構
 
@@ -418,3 +418,23 @@ USB、Uno 以及實體 Link 傳送層在這一次測試**沒有回報錯誤**。
 `PC: WORLD`，再重複 HELLO 與其他簡短問題測穩定度。
 如 UI 確認正確，才比較 `--reply-delay-ms 250`、100、0 的結果，
 並研究 Z80 `input_send` 畫面重繪是否讓接收緩衝溢位。
+
+
+### 2026-10-21 最終實機驗收：HELLO → PC: WORLD
+
+使用者補充確認：在先前成功送出完整 `Q 'HELLO'`、成功回傳
+33-byte 兩行 C frame 的紀錄之後，**TI-83 Plus 螢幕確實顯示
+`PC: WORLD`**。這補足了之前僅有 USB／Uno 端計數器、
+卻尚未確認 Z80 UI 的最後一項證據。使用者也已**明確授權合併到 main**。
+
+此次驗證精確涵蓋的內容：
+- 由原始 TI-83 Plus 送出 ASCII `S`、`Q HELLO`；
+- Uno 以 TIP=D3、RING=D6 正確接收並透過 USB 傳給 Python；
+- Python Demo Provider 產生 `WORLD` 回覆；
+- Uno 分批傳送 45-byte SYNC、33-byte Q 回覆，回報全數完成；
+- 計算機端實際顯示 `PC: WORLD`。
+
+**尚未驗收：** 取消 250ms turnaround、低於 35ms 的 inter-byte gap、
+高負載長串流、連續問答多次與實際雲端 LLM provider。
+這些可在後續獨立 PR 改進，不影響將已通過的
+**v0.5 demo 端到端驗收里程碑**納入 main。
