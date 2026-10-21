@@ -155,6 +155,25 @@ You can substitute `--model gemini-3.8-flash`. Neither the real Google API
 nor Gemini-on-calculator answers have been verified yet; mock tests cannot
 make external API calls. See [Gemini setup and status](docs/v06-gemini-provider.md).
 
+### Gemini response display — proposed
+
+In the `feat/gemini-standalone-header` branch, Gemini replies now have
+their own `GEMINI>` history row rather than `PC: ` prepended to the first
+answer. Every subsequent Gemini answer row can use **all 12 characters**:
+
+```text
+YOU: HELLO
+GEMINI>
+HELLO WORLD!
+```
+
+This updates the Windows Python bridge only; no new Uno firmware or
+calculator App is needed. The heading is stored in the existing
+`display_lines` SQLite table, so `SYNC`, `FETCH`, `UPDATE`, and
+scrolling all use the normal immutable 12-character rows. Historical
+`PC: ` records and `demo` responses are unchanged. This is pending
+real-device acceptance in a **Draft PR**, not merged to `main`.
+
 ## Hardware milestone: v0.5 demo accepted (2026-10-21)
 
 On the user's original TI-83 Plus and Arduino Uno with physical pins `TIP=3` / `RING=6`, Python `bridge_v05.py --port COM2 --provider demo --gap-ms 35 --debug-link --reply-delay-ms 250` completed:
