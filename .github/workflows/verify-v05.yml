@@ -139,7 +139,9 @@ jobs:
             bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
           cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
           cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          cp docs/v06-gemini-provider.md build/CHAT83-v05-Windows/GEMINI-SETUP.md
           cp docs/v05-wire-protocol.md build/CHAT83-v05-Windows/WIRE-PROTOCOL.md
+          test -s build/CHAT83-v05-Windows/requirements-v05-gemini.txt
           test -s build/CHAT83-v05-Windows/C83V5.8xp
           test -s build/CHAT83-v05-Windows/CHAT83.8xk
           test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"
