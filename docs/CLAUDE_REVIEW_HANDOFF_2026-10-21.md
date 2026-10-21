@@ -16,7 +16,7 @@
 | Layer | Actual file | Function |
 |---|---|---|
 | TI-83 Plus Z80 | [calculator/CHAT83_v05_chat.asm](../calculator/CHAT83_v05_chat.asm) | TI OS `_SendAByte` for initial `S`, Port 00/05 receive assist, `_GetCSC`, four-row input editor, 48-row ring/prefetch, CRC8 live updates |
-| Uno firmware | [arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino](../arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino) | D2=TIP, D3=RING, cooperative open-drain Link FSM, 115200-baud USB COBS/CRC8, physical bit diagnostics |
+| Uno firmware | [arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino](../arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino) | **user hardware: D3=TIP, D6=RING**, cooperative open-drain Link FSM, 115200-baud USB COBS/CRC8, physical bit diagnostics |
 | PC bridge | [bridge/bridge_v05.py](../bridge/bridge_v05.py) | USB COM port, SQLite, live answer polls, commands, `--debug-link` |
 | USB codec | [bridge/usb_v05.py](../bridge/usb_v05.py) | COBS/CRC8, sixteen-byte USB TX batches, `D` debug enable, `J` periodic telemetry |
 | App protocol | [bridge/protocol_v05.py](../bridge/protocol_v05.py) | `S/F/Q/U/R/K` requests, six-row `C` replies, CRC8/seq/absolute offsets |
@@ -30,11 +30,11 @@
 
 ### Upstream reference / working baseline
 
-[Original jw0k/serial2ti83](https://github.com/jw0k/serial2ti83/blob/master/serial2ti83.ino) successfully handled the same user's original TI-83 Plus via Uno D2/D3/GND for v0.3/v0.4. The new firmware is **not** a transparent serial-to-TI passthrough; it only understands COBS/CRC8 packets at 115200 baud. The old firmware is 9600-baud passthrough and is required for transferring `.8xp` files via TiLP if a separate TI Graph Link cable is unavailable.
+[Original jw0k/serial2ti83](https://github.com/jw0k/serial2ti83/blob/master/serial2ti83.ino) successfully handled the same user's original TI-83 Plus via a customized Uno Link cable (now confirmed D3=TIP/D6=RING) for v0.3/v0.4. The new firmware is **not** a transparent serial-to-TI passthrough; it only understands COBS/CRC8 packets at 115200 baud. The old firmware is 9600-baud passthrough and is required for transferring `.8xp` files via TiLP if a separate TI Graph Link cable is unavailable.
 
 ## Ground-truth physical hardware observations (do not overinterpret)
 
-**Hardware:** Original TI-83 Plus, Arduino Uno with USB-SERIAL CH340 on **COM2**, existing 2.5mm TI link connected to D2 TIP, D3 RING, common GND. The same wiring previously supported successful v0.4 calculator↔PC exchange.
+**Hardware:** Original TI-83 Plus, Arduino Uno with USB-SERIAL CH340 on **COM2**, existing 2.5mm TI link **confirmed by user as D3 TIP, D6 RING**, common GND. The same wiring previously supported successful v0.4 calculator↔PC exchange.
 
 ### 1. Initial installation issue, now documented
 
@@ -146,3 +146,24 @@ This review handoff documents code committed in GitHub and first-party reported 
   ```
 - Firmware E5 is emitted inside `RX_WAIT_RELEASE` only when the incoming TI-driven bit line remains LOW for at least 30ms after Uno begins ACK. This proves Uno entered RX state, but because Python previously immediately exited, **no post-event counters** were captured. Do not mistake earlier idle zeros for evidence of no bit start.
 - `bridge/usb_v05.py` now, **only with `--debug-link`**, reports E5 as a rate-limited warning and continues polling the 500ms `J` telemetry instead of tearing down COM2. Normal mode still raises E5. Next action: update **only usb_v05.py**, keep the user's locally configured D6 Uno in place, run debug bridge, trigger calculator, wait two seconds, collect snapshots, Ctrl+C. Exact E5 cause (missing ACK? source held LOW? transient pin race?) not yet known; do not merge Draft PR #7.
+
+
+## Later 2026-10-21 correction: TIP is D3, not D2; post-E5 logs captured
+
+User's physical wiring is **TIP=D3, RING=D6, sleeve=GND**. The earlier
+D2 TIP / D6 RING repo change was erroneous; both constants are now aligned
+(`TIP=3`, `RING=6`) and native Uno CI asserts both pins.
+Any tests or docs describing D2/D6 as the user's actual wiring are obsolete.
+The **upstream** original `serial2ti83` defaults are TIP=2, RING=3, so
+transferring via this user's cable requires modifying both constants there.
+
+With diagnostic persistence enabled, the user captured after-error values
+**start=84, ack=3, rx_bytes=0, rx_to=81, tx_to=0**. Samples in RX state
+showed TIP=L RING=L, while settled IDLE showed TIP=H RING=H. The Uno
+entered RX_WAIT_RELEASE repeatedly, almost always timing out without a
+full received byte. This trace rules out a purely USB/LLM issue.
+**However, it is not yet established whether the local Uno firmware
+producing this trace had TIP=3 or the earlier incorrect TIP=2.**
+If it did have TIP=3, the bit handshake or electrical interconnect must
+still be investigated; do not overclaim a GPIO mapping root cause.
+Continue collecting post-error J trace with both correct constants flashed.
