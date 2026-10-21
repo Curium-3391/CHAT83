@@ -172,8 +172,8 @@ class WordWrapTests(unittest.TestCase):
         wrapped = WordRows()
         self.assertEqual(wrapped.feed("HEL"), [])
         self.assertEqual(wrapped.feed("LO WOR"), [])
-        self.assertEqual(wrapped.feed("LD GOOD"), ["PC: HELLO".ljust(12), "WORLD".ljust(12)])
-        self.assertEqual(wrapped.feed("BYE"), [])
+        self.assertEqual(wrapped.feed("LD GOO"), ["PC: HELLO".ljust(12)])
+        self.assertEqual(wrapped.feed("DBYE "), ["WORLD".ljust(12)])
         self.assertEqual(wrapped.finish(), ["GOODBYE".ljust(12)])
         self.assertEqual(wrapped.finish(), [])
 
