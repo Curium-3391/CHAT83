@@ -2,16 +2,16 @@
 
 **A retro serial terminal for the TI-83 Plus, on the road to LLM connectivity.**
 
-> **Current status:** v0.2 text exchange has been tested on real hardware. **LLM integration is planned, not yet implemented.** This is experimental Z80 software.
+> **Current status (2026-10-21):** v0.5 has its first **confirmed end-to-end real-hardware demo** on an original TI-83 Plus: calculator `HELLO` → Python demo provider → calculator screen `PC: WORLD`. The working setup is Uno **TIP=D3 / RING=D6**, USB **COM2 at 115200 baud**, `--gap-ms 35 --reply-delay-ms 250`. Prior v0.2/v0.3.2 and v0.4 versions were also hardware-tested. This confirms a demo round trip, **not** long-term reliability, streaming performance, or a live LLM API integration.
 
-CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno running [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83). The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
+CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno. v0.2–v0.4 used upstream [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83); **v0.5 uses a separate custom Uno firmware** with COBS/CRC8 at 115200 baud, and is not TiLP-compatible. The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
 
 ```text
 TI-83 Plus (Z80) <-- 2.5 mm link --> Arduino Uno
-     <-- USB / serial, 9600 baud --> Windows Python bridge
+     <-- USB / serial, 115200 baud --> Windows Python bridge (v0.5)
                                       |
-                                      +--> local test replies (now)
-                                      +--> LLM API (future)
+                                      +--> offline demo replies (hardware-tested)
+                                      +--> OpenAI / Ollama options (not hardware-verified)
 ```
 
 ## Features (v0.2, tested)
@@ -22,20 +22,43 @@ TI-83 Plus (Z80) <-- 2.5 mm link --> Arduino Uno
 - Continue sending messages without restarting the PC bridge.
 - Key examples confirmed in a real test: `HELLO` → `WORLD`, `123` → `PC GOT: 123`, `A` → `PC GOT: A`.
 
-**Current limitation (v0.2):** the calculator clears the previous message when starting another. Experimental v0.3 adds paging and SQLite history and has passed automated compilation, but still needs real-device testing.
+**Current limitation (v0.2):** the calculator clears the previous message when starting another. v0.3.x adds remote paging and SQLite history; see below.
 
 ## Project layout
 
 ```text
 calculator/
-  CHAT83_v02.asm      # known working reference client
+  CHAT83_v02.asm          # v0.2 reference client (hardware-tested)
+  CHAT83_v03_remote.asm   # v0.3.2 remote-history client
+  CHAT83_v04_rx_probe.asm # v0.4 receive-assist probe (C83RX)
+  CHAT83_v04_chat.asm     # v0.4 cooperative chat client (C83V4)
+  CHAT83_v05_chat.asm     # v0.5 integrated terminal (C83V5)
+arduino/
+  CHAT83_Uno_v05/         # v0.5 Uno firmware (replaces serial2ti83)
 bridge/
-  bridge.py           # Python / serial2ti83 responder
-  requirements.txt
+  bridge.py               # v0.2 serial2ti83 responder
+  bridge_v03.py           # v0.3.2 SQLite history bridge
+  bridge_v04.py, probe_v04.py, prefetch_v04.py
+  bridge_v05.py           # v0.5 bridge: SQLite + demo/OpenAI/Ollama
+  protocol_v05.py         # v0.5 app frames (CRC8)
+  usb_v05.py              # v0.5 USB COBS/CRC8 transport to the Uno
+  providers_v05.py        # v0.5 LLM providers
+  prefetch_v05.py         # 48-row cache model used by tests
+  requirements*.txt
+windows/
+  start-chat83-v05.ps1    # v0.5 PowerShell launcher
+tests/                    # Python unit tests, native Uno handshake mock,
+                          # Z80 emulator tests (tests/emulator/)
+tools/
+  ti_0104_pubkey.py       # public app-signing key for RabbitSign checks
 docs/
-  protocol.md         # application-level wire format and limits
-  hardware.md         # wiring notes and upstream credit
-  development-log.md  # observed tests, open work and roadmap
+  protocol.md             # v0.2 wire format
+  protocol-v03.md         # v0.3.1/v0.3.2 wire format
+  v04-cooperative-link.md # v0.4 design and test procedure
+  v05-integrated-terminal.md # v0.5 install, operation, known faults
+  v05-wire-protocol.md    # v0.5 USB and app framing
+  hardware.md             # wiring notes and upstream credit
+  development-log.md      # observed tests, open work and roadmap
 ```
 
 ## Quick start
@@ -88,12 +111,19 @@ The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating
 
 **Both sides must use v0.3.2.** Update the calculator from `calculator/CHAT83_v03_remote.asm` and PC from `bridge/bridge_v03.py` from the same revision, then test after closing TiLP. The new protocol extension is documented in [protocol-v03.md](docs/protocol-v03.md). Experimental until real-device testing passes.
 
+## Experimental v0.4 and v0.5
+
+- **v0.4** (`C83V4`, `bridge_v04.py`, upstream serial2ti83): non-blocking receive through the original TI-83 Plus Port 00h/05h receive assist, `_GetCSC` keyboard polling and a 48-row predictive cache. See [v04-cooperative-link.md](docs/v04-cooperative-link.md).
+- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Partial hardware success confirmed 2026-10-21**: with the user's actual TIP=D3 / RING=D6 wiring and `--reply-delay-ms 250 --gap-ms 35`, physical TI→PC `S` and `Q 'HELLO'` completed, and PC→TI two reply frames (45+33=78 bytes) were fully acknowledged with zero errors. The calculator screen's `PC: WORLD` display has **not yet been confirmed**; do not mark v0.5 fully hardware verified. Earlier without turnaround delay Uno TX failed, so timing stability remains under investigation. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
+
+Both run on the **original TI-83 Plus only**; port 05h means something different on the TI-83 Plus SE and TI-84 Plus.
+
 ## Roadmap
 
 - Verify the history/scrolling prototype against SPASM-ng and real TI-83 Plus hardware.
 - Improve LCD input UX and longer messages.
 - Implement resilient packets with acknowledgments / retransmission.
-- Connect the Python backend to an LLM provider; keep API credentials on the PC, not on the calculator.
+- Complete v0.5 real-device validation: TI→PC `S`/`Q 'HELLO'` and 45/33-byte PC→TI responses now successfully handshake with 250ms host turnaround, but calculator display, repeatability, reduced delay and streaming UI remain unverified. API credentials stay on the PC.
 - Replace the PC bridge with an RP2040/ESP32-class Wi-Fi MCU later.
 
 ## Credits and license
@@ -103,3 +133,14 @@ The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating
 - This repository's original code and docs: [MIT License](LICENSE). No upstream Arduino source is copied into this repo.
 
 See the [development log](docs/development-log.md) for the distinction between confirmed results and planned features.
+
+
+## Hardware milestone: v0.5 demo accepted (2026-10-21)
+
+On the user's original TI-83 Plus and Arduino Uno with physical pins `TIP=3` / `RING=6`, Python `bridge_v05.py --port COM2 --provider demo --gap-ms 35 --debug-link --reply-delay-ms 250` completed:
+
+- Calculator → Uno → Windows: one SYNC byte and a valid 9-byte `Q 'HELLO'` request, total `rx=10`, exactly 80 bit starts / 80 bit ACKs, `rx_to=0`.
+- Windows → Uno → calculator: `SYNC` 45-byte 3-row response and `Q 'HELLO'` 33-byte 2-row response, total `tx=78`, zero reported errors.
+- **User explicitly confirmed `PC: WORLD` appears on the calculator's actual LCD** and authorized merging v0.5 into `main`.
+
+The 250 ms host response delay is still required in the demonstrated configuration; a previous run without turnaround delay experienced Uno TI TX timeout. Full stability, shorter delay, multi-turn UX, lengthy streams and API providers have not yet been physically verified. Preserve the `--reply-delay-ms 250` recommendation for this hardware until the timing root cause is fixed.

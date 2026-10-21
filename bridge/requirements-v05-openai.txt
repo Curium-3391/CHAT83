@@ -1,0 +1,2 @@
+-r requirements-v05.txt
+openai>=2.0,<4.0

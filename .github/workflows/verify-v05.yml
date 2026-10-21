@@ -1,0 +1,149 @@
+name: Verify CHAT83 v0.5 integrated terminal
+on:
+  push:
+    branches: [feat/v05-integrated-terminal]
+  pull_request:
+    paths:
+      - "arduino/CHAT83_Uno_v05/**"
+      - "calculator/CHAT83_v05_chat.asm"
+      - "bridge/bridge_v05.py"
+      - "bridge/protocol_v05.py"
+      - "bridge/usb_v05.py"
+      - "bridge/providers_v05.py"
+      - "tests/**"
+      - "tools/**"
+      - ".github/workflows/verify-v05.yml"
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check syntax
+        run: python -m compileall -q bridge tests
+      - name: Full regression plus v0.5 transport and LLM tests
+        run: PYTHONPATH=bridge python -m unittest discover -s tests -v
+  link-handshake-mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Simulate real Uno firmware against TI open-drain bit handshake
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -I tests/avr_mock \
+            tests/avr_mock/test_uno_rx.cpp -o build/test_uno_rx
+          ./build/test_uno_rx
+
+  uno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install Arduino Uno AVR core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+      - name: Compile nonblocking Arduino Uno firmware
+        run: |
+          arduino-cli compile --fqbn arduino:avr:uno \
+            --output-dir build/uno arduino/CHAT83_Uno_v05
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-uno-firmware
+          path: |
+            build/uno/*.hex
+            build/uno/*.elf
+  z80:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install app-signing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev libssl-dev rabbitsign
+      - name: Build SPASM-ng with app signing
+        run: |
+          git clone --depth 1 https://github.com/alberthdev/spasm-ng.git spasm-ng
+          make -C spasm-ng -j2
+          ! ./spasm-ng/spasm 2>&1 | grep -q "signing is NOT available"
+      - name: Assemble Asm( program and signed Flash App
+        run: |
+          mkdir -p build
+          ./spasm-ng/spasm -N -I spasm-ng/inc calculator/CHAT83_v05_chat.asm build/C83V5.8xp
+          ./spasm-ng/spasm -N -DCHAT83_APP -I spasm-ng/inc calculator/CHAT83_v05_chat.asm build/CHAT83.8xk
+          ./spasm-ng/spasm -N -DCHAT83_APP -DCHAT83_UI_DEMO -I spasm-ng/inc calculator/CHAT83_v05_chat.asm build/C83DEMO.8xk
+          ./spasm-ng/spasm -N -DCHAT83_UI_DEMO -I spasm-ng/inc calculator/CHAT83_v05_chat.asm build/C83DEMO.8xp
+          test -s build/C83V5.8xp
+          test -s build/C83DEMO.8xp
+          test "$(stat -c %s build/CHAT83.8xk)" -gt 1000
+          test "$(stat -c %s build/C83DEMO.8xk)" -gt 1000
+      - name: Verify Flash App signature (0104 key)
+        run: |
+          python3 tools/ti_0104_pubkey.py spasm-ng/export.cpp build/0104.key
+          rabbitsign -c -k build/0104.key build/CHAT83.8xk build/C83DEMO.8xk 2>&1 | tee build/sign.log
+          ! grep -qi "error\|incorrect" build/sign.log
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run the client on a Z80 core against the real bridge (no ROM)
+        run: |
+          mkdir -p build/z80
+          for variant in "program:" "app:-DCHAT83_APP" "demo:-DCHAT83_UI_DEMO" \
+                         "demoapp:-DCHAT83_APP -DCHAT83_UI_DEMO"; do
+            ./spasm-ng/spasm -N -L ${variant#*:} -I spasm-ng/inc \
+              calculator/CHAT83_v05_chat.asm "build/z80/${variant%%:*}.bin"
+          done
+          python -m pip install -r tests/emulator/requirements.txt
+          CHAT83_Z80_BUILD=build/z80 CHAT83_INC=spasm-ng/inc/ti83plus.inc \
+          CHAT83_SCREENSHOT_DIR=build/screens \
+            python -m unittest tests.test_v05_z80_emulator -v
+          test -n "$(ls build/screens/*.png)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-ui-screenshots
+          path: build/screens/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-calculator-8xp
+          path: |
+            build/C83V5.8xp
+            build/CHAT83.8xk
+            build/C83DEMO.8xk
+            build/C83DEMO.8xp
+
+  package:
+    needs: [python, uno, z80, link-handshake-mock]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHAT83-v05-uno-firmware
+          path: artifacts/uno
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHAT83-v05-calculator-8xp
+          path: artifacts/z80
+      - name: Build single Windows hardware test kit
+        run: |
+          mkdir -p build/CHAT83-v05-Windows
+          cp artifacts/z80/C83V5.8xp artifacts/z80/CHAT83.8xk \
+            artifacts/z80/C83DEMO.8xk artifacts/z80/C83DEMO.8xp build/CHAT83-v05-Windows/
+          cp artifacts/uno/*.hex build/CHAT83-v05-Windows/
+          cp arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino build/CHAT83-v05-Windows/
+          cp bridge/bridge_v03.py bridge/bridge_v05.py \
+            bridge/protocol_v05.py bridge/usb_v05.py \
+            bridge/providers_v05.py bridge/prefetch_v05.py \
+            bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
+          cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
+          cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          cp docs/v05-wire-protocol.md build/CHAT83-v05-Windows/WIRE-PROTOCOL.md
+          test -s build/CHAT83-v05-Windows/C83V5.8xp
+          test -s build/CHAT83-v05-Windows/CHAT83.8xk
+          test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHAT83-v05-Windows-complete-test-kit
+          path: build/CHAT83-v05-Windows/
