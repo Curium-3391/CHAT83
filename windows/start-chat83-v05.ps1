@@ -7,6 +7,7 @@ param(
   [int]$GapMs = 35,
   [int]$ReplyDelayMs = 250,  # real hardware-verified turnaround
   [switch]$DebugLink,
+  [switch]$WordWrap,
   [string]$Db = "",
   [switch]$Adaptive,
   [switch]$Verbose,
@@ -34,6 +35,7 @@ if ($Model) { $argsList += @("--model", $Model) }
 if ($Adaptive) { $argsList += "--adaptive" }
 if ($Verbose) { $argsList += "--verbose" }
 if ($DebugLink) { $argsList += "--debug-link" }
+if ($WordWrap) { $argsList += "--word-wrap" }
 Write-Host "Starting CHAT83 v0.5 on $Port / provider=$Provider / gap=$($GapMs)ms / turnaround=$($ReplyDelayMs)ms"
 & py @argsList
 exit $LASTEXITCODE
