@@ -303,7 +303,7 @@ def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False,
             engine.retry_count = 0
         if verbose or link.debug_link:
             print(f"[TX-BEGIN] {label}: {len(packet)} bytes "
-                  f"({len(packet) + 15 >> 4} batches), "
+                  f"({(len(packet) + 15) // 16} batches), "
                   f"turnaround={reply_delay_ms}ms", flush=True)
         if reply_delay_ms:
             time.sleep(reply_delay_ms / 1000.0)
