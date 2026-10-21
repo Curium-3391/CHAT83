@@ -23,6 +23,10 @@ jobs:
           python-version: "3.11"
       - name: Check syntax
         run: python -m compileall -q bridge tests
+      - name: Smoke-test optional Gemini SDK compatibility (no API calls)
+        run: |
+          python -m pip install -r bridge/requirements-v05-gemini.txt
+          python -c "from google import genai; from google.genai import types; assert types.Part.from_text(text='HELLO').text == 'HELLO'; assert types.Content(role='user', parts=[types.Part.from_text(text='HI')]).role == 'user'; assert hasattr(genai.Client, 'close')"
       - name: Full regression plus v0.5 transport and LLM tests
         run: PYTHONPATH=bridge python -m unittest discover -s tests -v
   link-handshake-mock:
