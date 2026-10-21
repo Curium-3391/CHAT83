@@ -15,11 +15,11 @@ Existing `C83V5.8xp` / `CHAT83.8xk` and Uno firmware remain unchanged.
    py -m pip install -r "$HOME\Downloads\CHAT83_v05\requirements-v05-gemini.txt"
    ```
 
-3. Configure `GEMINI_API_KEY` **locally** in Windows user environment variables;
-   open a new PowerShell afterward. For a temporary test in a single terminal
-   session, enter `$env:GEMINI_API_KEY = Read-Host "Gemini API key"` and keep
-   that terminal private. Prefer Windows Credential/Environment Variables
-   for routine use. Never print the secret.
+3. Configure `GEMINI_API_KEY` **locally**: in Windows search for
+   **Environment Variables** → under **User variables** add `GEMINI_API_KEY`
+   with the Google AI Studio key as its value. Open a **new PowerShell**
+   afterward so the process picks it up. Keep the key out of shell history,
+   GitHub, screenshots, code, and chat; do not print it.
 4. Start the bridge **before** launching CHAT83 on the calculator:
 
    ```powershell
@@ -54,7 +54,7 @@ Existing `C83V5.8xp` / `CHAT83.8xk` and Uno firmware remain unchanged.
 
 ## Verification status
 
-Unit tests can simulate the SDK and verify role translation, streaming,
+Unit tests mock the SDK and verify role translation, streaming,
 dependency/key handling and provider registration. **Real Gemini API
 calls have not been run by CI** (no credentials available). Physical
 Gemini-on-calculator generation requires the user's own API key and
