@@ -37,6 +37,7 @@ MAX_INPUT EQU 48
 start:
     xor a
     out (00h),a
+    res textInverse,(iy+textFlags)
     ; RAM state lives outside the program image (an App runs from read-only
     ; Flash), so every variable and the row cache start from zero here.
     ld hl,ram_vars
@@ -98,6 +99,7 @@ exit_program:
     xor a
     out (00h),a
     set graphDraw,(iy+graphFlags)  ; history_cache overwrote plotSScreen
+    res textInverse,(iy+textFlags)
 #ifdef CHAT83_APP
     bjump(_JForceCmdNoChar)
 #else
@@ -570,14 +572,18 @@ update_tail:
     ld a,(rows_to_copy)
     or a
     jr nz,update_maybe_follow
-    ; Empty live poll: avoid clearing/redrawing LCD at every interval.
+    ; Empty live poll: no rows changed, so only the status bars (AI/ERR,
+    ; ENTER/MODE hint) are repainted, and only on the history screen.
     call read_model_flags
     ld a,(rx_frame+7)
     and 3
     ld (page_flags),a
     xor a
     ld (request_kind),a
-    ret
+    ld a,(screen_kind)
+    cp SCREEN_HISTORY
+    ret nz
+    jp draw_status_bars
 update_maybe_follow:
     ld a,(follow_tail)
     or a
@@ -999,40 +1005,24 @@ replay_next:
 
 draw_load_status:
     ld a,7
-    call set_row
-    ld a,9
-    ld (curCol),a
-    ld hl,load_label
-    call put_str
-    ret
+    ld hl,loading_hint
+    jp draw_bar
 
-; Dirty cursor updates: only repaint two '>' positions when viewport stays
-; unchanged. Full six-row repaint is required only when viewport scrolls.
+; Cursor moved inside an unchanged viewport: repaint only the previously
+; selected row and the newly selected one. Any viewport change repaints all.
 cursor_refresh:
     ld a,(view_off)
     ld b,a
     ld a,(prior_view)
     cp b
     jp nz,draw_history
+    ld a,(screen_kind)
+    cp SCREEN_HISTORY
+    jp nz,draw_history
     ld a,(prior_cursor)
-    sub b
-    inc a
-    ld (curRow),a
-    ld a,14
-    ld (curCol),a
-    ld a,' '
-    bcall(_PutC)
-    ld a,(view_off)
-    ld b,a
+    call draw_history_row
     ld a,(cursor_off)
-    sub b
-    inc a
-    ld (curRow),a
-    ld a,14
-    ld (curCol),a
-    ld a,'>'
-    bcall(_PutC)
-    ret
+    jp draw_history_row
 
 maybe_prefetch:
     ld a,(request_kind)
@@ -1301,10 +1291,11 @@ input_screen:
     ld a,1
     ld (input_mode),a
     ld (alpha_mode),a
-    bcall(_ClrLCDFull)
-    bcall(_HomeUp)
+    ld a,SCREEN_EDITOR
+    call enter_screen
+    xor a
     ld hl,ask_title
-    call put_str
+    call draw_bar
     ld a,2
     call set_row
     ld hl,ask_label
@@ -1339,7 +1330,7 @@ input_key:
     cp sk0
     jr z,input_space
     ld hl,alpha_pairs
-    ld b,26
+    ld b,ALPHA_PAIR_COUNT
     jr input_lookup
 input_numeric:
     ld a,b
@@ -1514,6 +1505,9 @@ question_latest_set:
     call draw_history
     ret
 
+; Editor: rows 3-6 hold 4 x 12 characters, row 2 shows "YOU:" and a
+; length counter, the insertion point is an inverse block over the character
+; it precedes, and row 7 shows the keyboard mode and what ENTER will do.
 draw_input:
     ld a,3
     ld (editor_row),a
@@ -1543,6 +1537,8 @@ input_copy_printable:
     call set_row
     ld hl,input_line
     call put_str
+    ld a,13
+    call pad_to              ; clears a block cursor left in column 12
     ld a,(editor_offset)
     add a,12
     ld (editor_offset),a
@@ -1551,6 +1547,31 @@ input_copy_printable:
     ld (editor_row),a
     cp 7
     jr c,input_draw_loop
+
+    ; Length counter "nn/48" in columns 11-15 of row 2.
+    ld a,2
+    call set_row
+    ld a,11
+    ld (curCol),a
+    ld a,(input_len)
+    ld b,'0'-1
+input_count_tens:
+    inc b
+    sub 10
+    jr nc,input_count_tens
+    add a,'0'+10
+    ld c,a
+    ld a,b
+    cp '0'
+    jr nz,input_count_draw
+    ld a,' '
+input_count_draw:
+    call put_char
+    ld a,c
+    call put_char
+    ld hl,count_suffix
+    call put_str
+
     ; Cursor index 48 is drawn in the spare 13th column of row 6.
     ld a,(input_cursor)
     ld b,3
@@ -1570,29 +1591,47 @@ input_cursor_position:
     ld (curCol),a
     ld a,b
     ld (curRow),a
-    ld a,'_'
-    bcall(_PutC)
-    ld a,7
-    call set_row
+    ld hl,input_buf
+    ld a,(input_cursor)
+    ld e,a
+    ld d,0
+    add hl,de
+    ld a,(hl)
+    or a
+    jr nz,input_cursor_char
+    ld a,' '
+input_cursor_char:
+    call inverse_on
+    call put_char
+    call inverse_off
+
+    ld hl,alpha_hint
     ld a,(alpha_mode)
     or a
-    jr z,input_show_numbers
-    ld hl,alpha_label
-    call put_str
-    ret
-input_show_numbers:
-    ld hl,number_label
-    call put_str
-    ret
+    jr nz,input_hint_mode
+    ld hl,number_hint
+input_hint_mode:
+    ld a,7
+    call draw_bar
+    ld hl,send_hint
+    ld a,(busy_flag)
+    or a
+    jr z,input_hint_send
+    ld hl,wait_hint          ; ENTER keeps the text until the model is idle
+input_hint_send:
+    ld a,6
+    jp draw_bar_tag
 
 ; Physical TI-83+ ALPHA legend positions via GetCSC scan codes.
 alpha_pairs:
-    .db skMath,'A',skMatrix,'B',skPrgm,'C',skVars,'D'
-    .db skRecip,'E',skSin,'F',skCos,'G',skTan,'H',skPower,'I'
-    .db skSquare,'J',skComma,'K',skLParen,'L',skRParen,'M',skDiv,'N'
-    .db skLog,'O',skLn,'P',skStore,'Q'
-    .db sk7,'R',sk8,'S',sk9,'T',skMul,'U'
-    .db sk4,'V',sk5,'W',sk6,'X',sk1,'Y',sk2,'Z'
+    .db skMath,'A',skMatrix,'B',skPrgm,'C'            ; skMatrix = APPS key
+    .db skRecip,'D',skSin,'E',skCos,'F',skTan,'G',skPower,'H'
+    .db skSquare,'I',skComma,'J',skLParen,'K',skRParen,'L',skDiv,'M'
+    .db skLog,'N',sk7,'O',sk8,'P',sk9,'Q',skMul,'R'
+    .db skLn,'S',sk4,'T',sk5,'U',sk6,'V',skSub,'W'
+    .db skStore,'X',sk1,'Y',sk2,'Z'
+    .db skDecPnt,':',skChs,'?'
+ALPHA_PAIR_COUNT EQU 28
 numeric_pairs:
     .db sk0,'0',sk1,'1',sk2,'2',sk3,'3',sk4,'4'
     .db sk5,'5',sk6,'6',sk7,'7',sk8,'8',sk9,'9'
@@ -1740,6 +1779,42 @@ DEMO_ROW_COUNT  EQU 28
 #endif
 
 ; ---- text UI ----------------------------------------------------------
+; Screen map (16 x 8 cells of 6 x 8 pixels):
+;   row 0      inverse title bar, model status (AI / ERR) on the right
+;   rows 1-6   history: 12 text columns + 2 blank; selected row inverse
+;   row 7      inverse key-hint bar
+;   x 88-95    scrollbar over rows 1-6, drawn straight to the LCD driver
+; The LCD is cleared only when the screen changes (enter_screen), so
+; scrolling and live updates overwrite cells in place without flicker.
+SCREEN_HISTORY  EQU 1
+SCREEN_EDITOR   EQU 2
+SCREEN_LOADING  EQU 3
+SCREEN_ERROR    EQU 4
+
+; A = character. Draws at (curRow, curCol) with _PutMap, which never wraps
+; or scrolls (a full-width bar on row 7 would scroll with _PutC), then
+; advances curCol. Nothing is drawn past column 15. Preserves BC, DE, HL.
+put_char:
+    push af
+    ld a,(curCol)
+    cp 16
+    jr nc,put_char_skip
+    pop af
+    push bc
+    push de
+    push hl
+    bcall(_PutMap)
+    pop hl
+    pop de
+    pop bc
+    ld a,(curCol)
+    inc a
+    ld (curCol),a
+    ret
+put_char_skip:
+    pop af
+    ret
+
 ; _PutS replacement. A bcall maps the OS ROM page over 4000h-7FFFh, so an
 ; App's own strings are unreadable from inside _PutS; print per character.
 ; HL = NUL-terminated string; returns HL past the terminator.
@@ -1748,10 +1823,26 @@ put_str:
     inc hl
     or a
     ret z
-    push hl
-    bcall(_PutC)
-    pop hl
+    call put_char
     jr put_str
+
+; Print spaces until curCol reaches A.
+pad_to:
+    ld b,a
+pad_loop:
+    ld a,(curCol)
+    cp b
+    ret nc
+    ld a,' '
+    call put_char
+    jr pad_loop
+
+inverse_on:
+    set textInverse,(iy+textFlags)
+    ret
+inverse_off:
+    res textInverse,(iy+textFlags)
+    ret
 
 set_row:
     ld (curRow),a
@@ -1759,118 +1850,311 @@ set_row:
     ld (curCol),a
     ret
 
-draw_loading:
-    bcall(_ClrLCDFull)
-    bcall(_HomeUp)
-    ld hl,title
-    call put_str
-    ld a,3
+; A = row, HL = text: full-width inverse bar.
+draw_bar:
     call set_row
-    ld hl,loading
+    call inverse_on
     call put_str
-    ret
-draw_error:
-    bcall(_ClrLCDFull)
-    bcall(_HomeUp)
-    ld hl,error_text
+    ld a,16
+    call pad_to
+    jp inverse_off
+
+; A = column, HL = text: inverse text on the current row (bar overlays).
+draw_bar_tag:
+    ld (curCol),a
+    call inverse_on
     call put_str
-    ld a,2
+    jp inverse_off
+
+; A = row, HL = text: normal text starting at column 1.
+put_line:
     call set_row
-    ld hl,exit_help
-    call put_str
+    ld a,1
+    ld (curCol),a
+    jp put_str
+
+; A = screen id. Clears the LCD only when switching screens.
+enter_screen:
+    ld b,a
+    ld a,(screen_kind)
+    cp b
+    ret z
+    ld a,b
+    ld (screen_kind),a
+    bcall(_ClrLCDFull)
     ret
 
-draw_history:
-    bcall(_ClrLCDFull)
-    bcall(_HomeUp)
+draw_loading:
+    ld a,SCREEN_LOADING
+    call enter_screen
+    xor a
     ld hl,title
-    call put_str
+    call draw_bar
+    ld a,3
+    ld hl,connect_text
+    call put_line
+    ld a,4
+    ld hl,connect_text2
+    call put_line
     ld a,7
-    call set_row
-    ld hl,history_help
-    call put_str
+    ld hl,quit_hint
+    jp draw_bar
+
+draw_error:
+    ld a,SCREEN_ERROR
+    call enter_screen
+    xor a
+    ld hl,error_title
+    call draw_bar
+    ld a,2
+    ld hl,error_text
+    call put_line
+    ld a,3
+    ld hl,error_text2
+    call put_line
+    ld a,5
+    ld hl,retry_text
+    call put_line
+    ld a,6
+    ld hl,quit_text
+    call put_line
+    ld a,7
+    ld hl,retry_hint
+    jp draw_bar
+
+draw_status_bars:
+    xor a
+    ld hl,title
+    call draw_bar
     ld a,(model_error)
     or a
-    jr nz,show_model_error
+    jr z,status_no_error
+    ld a,13
+    ld hl,err_label
+    call draw_bar_tag
+    jr status_hint
+status_no_error:
     ld a,(busy_flag)
     or a
-    jr z,history_no_state
-    ld a,11
-    ld (curCol),a
+    jr z,status_hint
+    ld a,14
     ld hl,live_label
-    call put_str
-    jr history_no_state
-show_model_error:
-    ld a,11
-    ld (curCol),a
-    ld hl,err_label
-    call put_str
-history_no_state:
-    ld a,(cache_count)
+    call draw_bar_tag
+status_hint:
+    ld hl,ask_hint
+    ld a,(busy_flag)
     or a
-    jr nz,draw_rows
-    ld a,2
-    call set_row
-    ld hl,empty_text
-    call put_str
-    ret
-draw_rows:
+    jr z,status_hint_draw
+    ld hl,stop_hint
+status_hint_draw:
+    ld a,7
+    jp draw_bar
+
+draw_history:
+    ld a,SCREEN_HISTORY
+    call enter_screen
+    call draw_status_bars
     ld a,(view_off)
     ld (draw_index),a
     ld a,1
     ld (draw_row),a
 draw_row_loop:
-    ld a,(draw_row)
-    cp 7
-    ret nc
     ld a,(draw_index)
     ld b,a
     ld a,(cache_count)
     cp b
-    ret z
+    jr z,draw_blank_row
+    jr c,draw_blank_row
     ld a,(draw_index)
-    call ring_addr
+    call draw_history_row
+    jr draw_row_next
+draw_blank_row:
     ld a,(draw_row)
     call set_row
-    call put_str
-    ld a,(draw_index)
-    ld b,a
-    ld a,(cursor_off)
-    cp b
-    jr nz,no_cursor
-    ld a,(draw_row)
-    ld (curRow),a
     ld a,14
-    ld (curCol),a
-    ld a,'>'
-    bcall(_PutC)
-no_cursor:
+    call pad_to
+draw_row_next:
     ld a,(draw_index)
     inc a
     ld (draw_index),a
     ld a,(draw_row)
     inc a
     ld (draw_row),a
-    jp draw_row_loop
+    cp 7
+    jr c,draw_row_loop
+    ld a,(cache_count)
+    or a
+    jr nz,draw_scrollbar
+    ld a,3
+    ld hl,empty_text
+    call put_line
+    jp draw_scrollbar
+
+; A = logical cache index inside the viewport. Draws its 12 characters on
+; its screen row, inverted (with one trailing cell) when it is selected.
+draw_history_row:
+    ld (paint_index),a
+    ld b,a
+    ld a,(view_off)
+    ld c,a
+    ld a,b
+    sub c
+    inc a
+    call set_row
+    ld a,(paint_index)
+    ld b,a
+    ld a,(cursor_off)
+    cp b
+    call z,inverse_on
+    ld a,(paint_index)
+    call ring_addr
+    call put_str
+    ld a,13
+    call pad_to
+    call inverse_off
+    ld a,14
+    jp pad_to
+
+; Scrollbar over the 48-pixel history area (LCD rows 8-55), in LCD byte
+; column 11 (x 88-95): a dotted track at x 92 and a 3-pixel thumb at
+; x 91-93 sized and placed by the viewport within the cached rows.
+draw_scrollbar:
+    xor a
+    ld (thumb_top),a
+    ld (thumb_len),a         ; no rows: track only
+    ld a,(cache_count)
+    or a
+    jr z,scroll_paint
+    cp 7
+    jr nc,scroll_scaled
+    ld a,48                  ; everything fits: full-length thumb
+    ld (thumb_len),a
+    jr scroll_paint
+scroll_scaled:
+    ld c,a
+    ld hl,48*6
+    call div_hl_c            ; length = 48 * 6 / rows
+    ld (thumb_len),a
+    ld b,a
+    ld a,48
+    sub b
+    ld e,a                   ; free track pixels
+    ld a,(view_off)
+    call mul_a_e
+    ld a,(cache_count)
+    sub 6
+    ld c,a
+    call div_hl_c            ; top = free * view / (rows - 6)
+    ld (thumb_top),a
+scroll_paint:
+    di
+    ld a,05h                 ; auto-increment the row (OS default mode)
+    call lcd_command
+    ld a,20h+11
+    call lcd_command
+    ld a,80h+8
+    call lcd_command
+    ld b,0
+scroll_paint_loop:
+    ld a,(thumb_top)
+    ld c,a
+    ld a,b
+    sub c
+    jr c,scroll_track
+    ld c,a
+    ld a,(thumb_len)
+    cp c
+    jr z,scroll_track
+    jr c,scroll_track
+    ld a,1Ch
+    jr scroll_write
+scroll_track:
+    ld a,b
+    and 1
+    ld a,08h
+    jr z,scroll_write
+    xor a
+scroll_write:
+    call lcd_data
+    inc b
+    ld a,b
+    cp 48
+    jr c,scroll_paint_loop
+    ei
+    ret
+
+; Write A to the LCD command / data port after the ROM's driver delay.
+; AF and BC are saved around the delay so callers need not rely on it.
+lcd_command:
+    call lcd_delay
+    out (10h),a
+    ret
+lcd_data:
+    call lcd_delay
+    out (11h),a
+    ret
+lcd_delay:
+    push af
+    push bc
+    call LCD_BUSY_QUICK
+    pop bc
+    pop af
+    ret
+
+; HL = A * E (A, E small). Destroys D.
+mul_a_e:
+    ld hl,0
+    ld d,0
+    or a
+    ret z
+mul_loop:
+    add hl,de
+    dec a
+    jr nz,mul_loop
+    ret
+
+; A = HL / C, C > 0, quotient < 256. Destroys B, DE, HL.
+div_hl_c:
+    ld b,0
+    ld e,c
+    ld d,0
+    or a
+div_loop:
+    sbc hl,de
+    jr c,div_done
+    inc b
+    jr div_loop
+div_done:
+    ld a,b
+    ret
 
 #ifdef CHAT83_UI_DEMO
-title:          .db "CHAT83 DEMO",0
+title:          .db " CHAT83 DEMO",0
 #else
-title:          .db "CHAT83 V0.5",0
+title:          .db " CHAT83 V0.5",0
 #endif
-loading:        .db "RX IN BG...",0
-error_text:     .db "LINK ERROR",0
-exit_help:      .db "CLEAR: EXIT",0
-empty_text:     .db "NO HISTORY",0
-history_help:   .db "ENTER:ASK",0
-load_label:     .db "LOADING",0
+ask_title:      .db " NEW MESSAGE",0
+ask_label:      .db "YOU:",0
+connect_text:   .db "Connecting to",0
+connect_text2:  .db "the PC...",0
+error_title:    .db " LINK ERROR",0
+error_text:     .db "No valid reply",0
+error_text2:    .db "from the PC.",0
+retry_text:     .db "MODE:  retry",0
+quit_text:      .db "CLEAR: quit",0
+empty_text:     .db "No history.",0
+ask_hint:       .db " ENTER:ASK",0
+stop_hint:      .db " MODE:STOP",0
+loading_hint:   .db " LOADING...",0
+quit_hint:      .db " CLEAR:QUIT",0
+retry_hint:     .db " MODE:RETRY",0
 live_label:     .db "AI",0
 err_label:      .db "ERR",0
-ask_title:      .db "CHAT83 INPUT",0
-ask_label:      .db "YOU:",0
-alpha_label:    .db "ALPHA ON",0
-number_label:   .db "NUMBERS ",0
-blank13:        .db "             ",0
+count_suffix:   .db "/48",0
+alpha_hint:     .db " A-Z",0
+number_hint:    .db " 0-9",0
+send_hint:      .db "ENTER:SEND",0
+wait_hint:      .db "AI WORKING",0
 
 ; ---- RAM state -------------------------------------------------------
 ; Not part of the program image: an App executes from read-only Flash.
@@ -1937,7 +2221,11 @@ fetch_start     EQU ram_vars+178 ; 4
 calc_addr       EQU ram_vars+182 ; 4
 fetch_wire      EQU ram_vars+186 ; 9
 rx_frame        EQU ram_vars+195 ; 81
-RAM_VARS_SIZE   EQU 276
+screen_kind     EQU ram_vars+276 ; 1
+paint_index     EQU ram_vars+277 ; 1
+thumb_top       EQU ram_vars+278 ; 1
+thumb_len       EQU ram_vars+279 ; 1
+RAM_VARS_SIZE   EQU 280
 
 #ifdef CHAT83_APP
     validate

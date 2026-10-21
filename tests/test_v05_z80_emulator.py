@@ -13,6 +13,7 @@ The Uno, the physical link handshake and ROM timing are outside this test.
 """
 import os
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -31,6 +32,20 @@ except ImportError:  # plain Python job: no emulator packages
 from bridge_v03 import db_connect
 from bridge_v05 import ConversationEngine
 from providers_v05 import DemoProvider
+
+
+class GatedProvider:
+    """Streams one line, then holds the rest until `gate` is set."""
+
+    name = "gated"
+
+    def __init__(self):
+        self.gate = threading.Event()
+
+    def stream(self, messages):
+        yield "First line. "
+        self.gate.wait(5)
+        yield "Second part."
 
 
 class RequestReader:
@@ -73,6 +88,11 @@ class Z80ClientTests(unittest.TestCase):
             Path(SHOTS).mkdir(parents=True, exist_ok=True)
             render_png(h.screen, Path(SHOTS) / f"{name}.png")
 
+    def assert_scrollbar_lane_clear(self, h):
+        """History rows use columns 0-13; 14-15 belong to the scrollbar."""
+        for r in range(1, 7):
+            self.assertEqual(h.screen.text(r)[14:], "  ", h.screen.dump())
+
     def wait_for_text(self, h, text: str, rounds: int = 40):
         for _ in range(rounds):
             h.run_until_idle()
@@ -91,13 +111,14 @@ class Z80ClientTests(unittest.TestCase):
         h = self.harness(name)
         h.run_until_idle()
         self.assertEqual(h.peer.log[0][0], b"S")
-        self.assertIn("NO HISTORY", h.screen.dump())
+        self.assertIn("No history.", h.screen.dump())
         self.ask_numbers(h, "123")
         self.wait_for_text(h, "YOU: 123")
         self.wait_for_text(h, "123")
         self.assertEqual([r[:1] for r, _ in h.peer.log][:2], [b"S", b"Q"])
         roles = self.db.execute("SELECT role, content FROM messages ORDER BY id").fetchall()
         self.assertEqual(roles[0], ("user", "123"))
+        self.assert_scrollbar_lane_clear(h)
         self.shot(h, f"{name.split('.')[0]}_answer")
         h.press(h.sk("Clear"))
         self.assertTrue(h.exited)
@@ -125,6 +146,85 @@ class Z80ClientTests(unittest.TestCase):
         self.shot(h, "demo_answer")
         h.press(h.sk("Clear"))
         self.assertTrue(h.exited)
+
+    def assert_bars(self, h, title, hint):
+        """Rows 0 and 7 are full-width inverse bars."""
+        self.assertEqual(h.screen.inverse(0), "#" * 16, h.screen.dump())
+        self.assertEqual(h.screen.inverse(7), "#" * 16, h.screen.dump())
+        self.assertTrue(h.screen.text(0).startswith(title), h.screen.text(0))
+        self.assertTrue(h.screen.text(7).startswith(hint), h.screen.text(7))
+
+    def selected_rows(self, h):
+        return [r for r in range(1, 7) if h.screen.inverse(r).startswith("#" * 13)]
+
+    def thumb_rows(self, h):
+        """LCD rows where the scrollbar thumb (x 91-93) is drawn."""
+        return [y for y in range(8, 56) if h.screen.pixels[y][91:94] == [True] * 3]
+
+    def test_history_ui_selection_and_scrollbar(self):
+        h = self.harness("demoapp.bin", peer=False)
+        h.run_until_idle()
+        self.assert_bars(h, " CHAT83 DEMO", " ENTER:ASK")
+        self.assertEqual(self.selected_rows(h), [6])           # newest row
+        self.assertNotIn(">", h.screen.dump())
+        # 28 rows: thumb = 48 * 6 / 28 = 10 px, at the bottom of the track.
+        self.assertEqual(self.thumb_rows(h), list(range(46, 56)))
+        h.press(h.sk("Up"))
+        self.assertEqual(self.selected_rows(h), [5])
+        h.press(*[h.sk("Up")] * 40)
+        self.assertEqual(self.selected_rows(h), [1])
+        self.assertEqual(self.thumb_rows(h), list(range(8, 18)))
+        self.assertTrue(h.screen.text(1).startswith("YOU: HELLO"))
+        self.assert_scrollbar_lane_clear(h)
+        self.shot(h, "ui_top")
+
+    def test_editor_ui_and_alpha_letters(self):
+        h = self.harness("demoapp.bin", peer=False)
+        h.run_until_idle()
+        h.press(h.sk("Enter"))
+        self.assert_bars(h, " NEW MESSAGE", " A-Z  ENTER:SEND")
+        # Keys printed with H, I, then ':' / '?' on the TI-83 Plus keypad.
+        h.press(h.sk("Power"), h.sk("Square"), h.sk("Chs"))
+        self.assertEqual(h.screen.text(3)[:3], "HI?")
+        self.assertEqual(h.screen.text(2)[11:], " 3/48")
+        self.assertEqual(h.screen.inverse(3)[:4], "...#")      # block cursor at end
+        h.press(h.sk("Left"), h.sk("Left"))
+        self.assertEqual(h.screen.inverse(3)[:4], ".#..")      # over the 'I'
+        self.assertEqual(h.screen.text(3)[:3], "HI?")
+        h.press(h.sk("Alpha"))
+        self.assert_bars(h, " NEW MESSAGE", " 0-9  ENTER:SEND")
+        self.shot(h, "ui_editor")
+        # Every letter key maps to the letter printed above it.
+        h.press(h.sk("Clear"), h.sk("Enter"))
+        keys = ("Math Matrix Prgm Recip Sin Cos Tan Power Square Comma LParen "
+                "RParen Div Log 7 8 9 Mul Ln 4 5 6 Sub Store 1 2").split()
+        h.press(*[h.sk(k) for k in keys])
+        typed = "".join(h.screen.text(r)[:12] for r in (3, 4, 5))
+        self.assertEqual(typed[:26], "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+    def test_busy_status_and_cancel(self):
+        provider = GatedProvider()
+        self.engine = ConversationEngine(self.db, provider)
+        h = self.harness("app.bin")
+        h.run_until_idle()
+        self.ask_numbers(h, "9")
+        self.wait_for_text(h, "PC: First li")          # 12-column wrap
+        self.assert_bars(h, " CHAT83 V0.5", " MODE:STOP")
+        self.assertEqual(h.screen.text(0)[14:], "AI")
+        self.shot(h, "ui_busy")
+        h.press(h.sk("Enter"))                       # editor while generating
+        self.assertEqual(h.screen.text(7)[6:], "AI WORKING")
+        h.press(h.sk("Clear"), h.sk("Mode"))         # back to history, cancel
+        provider.gate.set()
+        self.wait_for_text(h, "[CANCELLED]")
+        self.assertIn(b"K", [r[:1] for r, _ in h.peer.log])
+        for _ in range(20):                          # BUSY clears on a later poll
+            h.run_until_idle()
+            if h.screen.text(0)[14:] != "AI":
+                break
+            time.sleep(0.02)
+        self.assert_bars(h, " CHAT83 V0.5", " ENTER:ASK")
+        self.assertEqual(h.screen.text(0)[14:], "  ")
 
     def test_demo_program_wraps_cache(self):
         """Six answers push the 28 seeded rows past the 48-row cache."""
