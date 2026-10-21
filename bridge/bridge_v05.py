@@ -69,11 +69,76 @@ class StableRows:
         return result
 
 
+class WordRows:
+    """Optional streaming word wrap for the TI's 12-character text rows.
+
+    Keeps a word pending across arbitrary Gemini token boundaries, then
+    commits immutable padded display rows. Long words still split at 12
+    columns. Existing StableRows remains the backwards-compatible default.
+    """
+
+    def __init__(self):
+        self.partial = "PC: "
+        self.word = ""
+        self.space_pending = False
+
+    def _flush_word(self, ready: list[str]):
+        if not self.word:
+            return
+        sep = " " if self.space_pending and self.partial and not self.partial.endswith(" ") else ""
+        # Prefer a new row instead of splitting a normal-sized word.
+        if self.partial and len(self.partial) + len(sep) + len(self.word) > 12:
+            ready.append(self.partial.ljust(12))
+            self.partial = ""
+            sep = ""
+        self.partial += sep
+        while len(self.word) > 12 - len(self.partial):
+            width = 12 - len(self.partial)
+            self.partial += self.word[:width]
+            self.word = self.word[width:]
+            ready.append(self.partial)
+            self.partial = ""
+        self.partial += self.word
+        self.word = ""
+        if len(self.partial) == 12:
+            ready.append(self.partial)
+            self.partial = ""
+        self.space_pending = False
+
+    def feed(self, text: str) -> list[str]:
+        ready = []
+        for ch in ascii_text(text):
+            if ch == "\n":
+                self._flush_word(ready)
+                ready.append(self.partial.ljust(12))
+                self.partial = ""
+                self.space_pending = False
+            elif ch == " ":
+                self._flush_word(ready)
+                self.space_pending = True
+            else:
+                self.word += ch
+                if len(self.word) >= 12:
+                    self._flush_word(ready)
+        return ready
+
+    def finish(self) -> list[str]:
+        ready = []
+        self._flush_word(ready)
+        if self.partial:
+            ready.append(self.partial.ljust(12))
+        self.partial = ""
+        self.space_pending = False
+        return ready
+
+
 class ConversationEngine:
-    def __init__(self, db, provider, *, max_context_chars: int = 8000):
+    def __init__(self, db, provider, *, max_context_chars: int = 8000,
+                 word_wrap: bool = False):
         self.db = db
         self.provider = provider
         self.max_context_chars = max_context_chars
+        self.word_wrap = word_wrap
         self.stream_queue = SimpleQueue()
         self.worker = None
         self.cancel_event = Event()
@@ -202,7 +267,7 @@ class ConversationEngine:
         with self.db:
             cur = self.db.execute("INSERT INTO messages(role,content) VALUES('assistant','')")
             self.assistant_id = cur.lastrowid
-        self.row_builder = StableRows()
+        self.row_builder = WordRows() if self.word_wrap else StableRows()
         self.assistant_text = ""
         self.generating = True
         self.cancel_event.clear()
@@ -325,6 +390,8 @@ def main():
     ap.add_argument("--gap-ms", type=int, default=35,
                     help="Uno inter-byte Link gap (2..50 ms; first hardware test keep 35)")
     ap.add_argument("--max-context-chars", type=int, default=8000)
+    ap.add_argument("--word-wrap", action="store_true",
+                    help="experiment: wrap Gemini output at word boundaries in 12 columns")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--debug-link", action="store_true",
                     help="ask patched Uno to report physical link counters every 500ms")
@@ -344,7 +411,8 @@ def main():
     import serial
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with db_connect(args.db) as db:
-        engine = ConversationEngine(db, provider, max_context_chars=args.max_context_chars)
+        engine = ConversationEngine(db, provider, max_context_chars=args.max_context_chars,
+                                    word_wrap=args.word_wrap)
         print(f"CHAT83 v0.5 | COM={args.port} | provider={args.provider} | model={model} | DB={args.db}")
         with serial.Serial(args.port, baudrate=115200, timeout=0.02,
                            write_timeout=5) as ser:
