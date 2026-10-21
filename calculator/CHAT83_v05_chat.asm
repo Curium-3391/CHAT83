@@ -5,9 +5,15 @@
 ; Build targets (see .github/workflows/verify-v05.yml):
 ;   default            C83V5.8xp program, run with Asm(prgmC83V5)
 ;   -DCHAT83_APP       CHAT83.8xk signed Flash App, run from the APPS menu
+;   -DCHAT83_UI_DEMO   offline UI preview (C83DEMO): no link traffic, seeded
+;                      history, local answers; for emulators without a PC
 #ifdef CHAT83_APP
 #include "app.inc"
+#ifdef CHAT83_UI_DEMO
+    defpage(0, "C83DEMO")
+#else
     defpage(0, "CHAT83")
+#endif
 #else
 .org userMem - 2
 .db t2ByteTok, tAsmCmp
@@ -39,6 +45,11 @@ start:
     ld hl,history_cache
     ld bc,CACHE_ROWS*13
     call zero_fill
+#ifdef CHAT83_UI_DEMO
+    call demo_seed
+    call draw_history
+    jp main_loop
+#endif
     call draw_loading
     ld a,'S'
     ld (request_kind),a
@@ -1454,6 +1465,9 @@ input_send:
     ld a,(busy_flag)
     or a
     ret nz                 ; preserve composed text until model is idle
+#ifdef CHAT83_UI_DEMO
+    jp demo_answer
+#endif
 
     ; Build a complete checksum-protected question BEFORE touching Link port.
     ; Q + LEN + ASCII(1..48) + LATEST + CRC8(poly 07)
@@ -1586,6 +1600,145 @@ numeric_pairs:
     .db skMul,'*',skDiv,'/',skLParen,'(',skRParen,')'
     .db skComma,','
 
+#ifdef CHAT83_UI_DEMO
+; ---- UI demo build ----------------------------------------------------
+; No link traffic: history is seeded from demo_rows and each question is
+; answered locally, so the whole UI can be explored in an emulator. The
+; demo never sets the older/newer flags, so no F/U requests are planned.
+demo_seed:
+    ld hl,demo_rows
+    ld b,DEMO_ROW_COUNT
+demo_seed_loop:
+    push bc
+    call demo_append_row
+    pop bc
+    djnz demo_seed_loop
+    jp demo_snap_tail
+
+; HL = 12 bytes. Appends one row, overwriting the oldest when the cache is
+; full. Returns HL past the source row.
+demo_append_row:
+    push hl
+    ld a,(cache_count)
+    cp CACHE_ROWS
+    jr c,demo_row_space
+    ld a,(cache_head)
+    inc a
+    cp CACHE_ROWS
+    jr c,demo_head_ok
+    xor a
+demo_head_ok:
+    ld (cache_head),a
+    ld a,CACHE_ROWS-1
+    jr demo_row_write
+demo_row_space:
+    inc a
+    ld (cache_count),a
+    dec a
+demo_row_write:
+    call ring_addr
+    ex de,hl
+    pop hl
+    ld bc,12
+    ldir
+    xor a
+    ld (de),a
+    ret
+
+demo_snap_tail:
+    ld a,(cache_count)
+    dec a
+    ld (cursor_off),a
+    sub 5
+    jr nc,demo_view
+    xor a
+demo_view:
+    ld (view_off),a
+    ret
+
+; Hard-wrap "YOU: " + question into 12-column rows (rx_frame is scratch),
+; then append a canned reply.
+demo_answer:
+    ld hl,rx_frame
+    ld (hl),' '
+    ld de,rx_frame+1
+    ld bc,59
+    ldir
+    ld hl,demo_you
+    ld de,rx_frame
+    ld bc,5
+    ldir
+    ld hl,input_buf
+    ld a,(input_len)
+    ld c,a
+    ldir
+    ld a,(input_len)
+    add a,5+11             ; rows = (5 + len + 11) / 12
+    ld b,0
+demo_count_rows:
+    cp 12
+    jr c,demo_rows_known
+    sub 12
+    inc b
+    jr demo_count_rows
+demo_rows_known:
+    ld hl,rx_frame
+demo_question_loop:
+    push bc
+    call demo_append_row
+    pop bc
+    djnz demo_question_loop
+    ld hl,demo_reply
+    ld b,DEMO_REPLY_ROWS
+demo_reply_loop:
+    push bc
+    call demo_append_row
+    pop bc
+    djnz demo_reply_loop
+    xor a
+    ld (input_mode),a
+    call demo_snap_tail
+    jp draw_history
+
+demo_you:       .db "YOU: "
+demo_reply:
+    .db "PC: Demo    "
+    .db "build, no PC"
+    .db "link.       "
+DEMO_REPLY_ROWS EQU 3
+; Generated with bridge_v03.text_rows, so wrapping matches real history.
+demo_rows:
+    .db "YOU: HELLO  "
+    .db "PC: WORLD   "
+    .db "YOU: WHAT IS"
+    .db "CHAT83      "
+    .db "PC: A retro "
+    .db "chat        "
+    .db "terminal for"
+    .db "the TI-83   "
+    .db "Plus. A PC  "
+    .db "bridge talks"
+    .db "to the LLM  "
+    .db "for you.    "
+    .db "YOU: HOW    "
+    .db "FAST        "
+    .db "PC: About 3 "
+    .db "seconds per "
+    .db "six lines at"
+    .db "the default "
+    .db "35 ms link  "
+    .db "gap.        "
+    .db "YOU: DEMO   "
+    .db "PC: Offline "
+    .db "UI preview. "
+    .db "Use UP and  "
+    .db "DOWN to     "
+    .db "scroll,     "
+    .db "ENTER to    "
+    .db "type.       "
+DEMO_ROW_COUNT  EQU 28
+#endif
+
 ; ---- text UI ----------------------------------------------------------
 ; _PutS replacement. A bcall maps the OS ROM page over 4000h-7FFFh, so an
 ; App's own strings are unreadable from inside _PutS; print per character.
@@ -1700,7 +1853,11 @@ no_cursor:
     ld (draw_row),a
     jp draw_row_loop
 
+#ifdef CHAT83_UI_DEMO
+title:          .db "CHAT83 DEMO",0
+#else
 title:          .db "CHAT83 V0.5",0
+#endif
 loading:        .db "RX IN BG...",0
 error_text:     .db "LINK ERROR",0
 exit_help:      .db "CLEAR: EXIT",0
