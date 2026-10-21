@@ -39,6 +39,13 @@
 - Hardware: PC↔Uno USB handshake confirmed on COM2 (CH340). Running `Asm(prgmC83V5)` shows the ROM `ERR:LINK` and no `SYNC` reaches the PC. The `RX_ACK_SETTLE` guard is an unverified candidate fix.
 - **Status: not working on hardware.** The next step is the `--debug-link` counters captured *after* `ERR:LINK` (see [CLAUDE_REVIEW_HANDOFF_2026-10-21.md](CLAUDE_REVIEW_HANDOFF_2026-10-21.md)).
 
+## 2026-10-21 — v0.5 Flash App and UI polish
+
+- The calculator client also builds as a signed Flash App (`CHAT83.8xk`, APPS menu). Writable state moved out of the program image into `plotSScreen`/`appBackUpScreen`; `_PutS` was replaced because a bcall hides App strings from the OS.
+- UI: inverse title/hint bars, inverse selected row, pixel scrollbar, block cursor and length counter, flicker-free redraws. Fixed the ALPHA letter table, which was shifted from D onward.
+- `C83DEMO` offline build and a ROM-free Z80 harness that runs the real builds against `bridge_v05.ConversationEngine` in CI.
+- **Status:** CI- and emulator-tested only. Not yet run on a physical TI-83 Plus, and the v0.5 `ERR:LINK` is still open.
+
 ## Roadmap
 
 1. Resolve the v0.5 `ERR:LINK` on the Uno ↔ TI-83 Plus link.

@@ -8,7 +8,7 @@
 
 ```text
 Original TI-83 Plus
-  C83V5.8xp -- Z80, _GetCSC, 48×13B ring, 6×12B staged CRC8,
+  CHAT83.8xk App (or C83V5.8xp) -- Z80, _GetCSC, 48×13B ring, 6×12B staged CRC8,
   4×12B editor, 16-row predictive trigger, polling for live LLM rows
        | TIP / RING / GND (2.5mm link)
 Arduino Uno ATmega328P
@@ -46,8 +46,9 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
    若你的 Uno 已經刷成 CHAT83 v0.5，先關閉 Python Bridge／TiLP 與
    Arduino 序列監控器，再用 Arduino IDE 將上游原版 sketch 重新上傳。
 3. 用之前驗證過的 Uno TIP=D2／RING=D3／GND 接線，**在原版韌體下
-   使用 TiLP 傳入 `C83V5.8xp`**；確認計算機的 PRGM 清單內出現
-   `C83V5`。完整關閉 TiLP，釋放 COM 埠。
+   使用 TiLP 傳入 `CHAT83.8xk`**（建議，Flash App），確認計算機的
+   **APPS** 選單出現 `CHAT83`。也可以改傳 `C83V5.8xp`，它會出現在
+   PRGM 清單。兩者功能相同，可同時保留。完整關閉 TiLP，釋放 COM 埠。
 4. 暫時拔下計算機的 Link 插頭，再用 Arduino IDE 開啟
    `CHAT83_Uno_v05.ino`，板子選 Arduino Uno，重新上傳新的 v0.5
    韌體。上傳完成後關閉 Arduino IDE 的 Serial Monitor，重新接上
@@ -63,13 +64,14 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
    ```
 
 7. 看到 `CHAT83 Uno v0.5 handshake OK` 與 `Listening...` 後，
-   在**原版** TI-83 Plus 執行 `Asm(prgmC83V5)`。
+   在**原版** TI-83 Plus 按 **APPS** 選 `CHAT83`；如果裝的是程式版，
+   則執行 `Asm(prgmC83V5)`。
 
 **如果手邊另有原廠 TI USB／Graph Link 傳輸線**，可以直接用那條線
-透過 TiLP 傳入 `C83V5.8xp`，之後只需刷一次 Uno v0.5。這是獨立
+透過 TiLP 傳入 `CHAT83.8xk` 或 `C83V5.8xp`，之後只需刷一次 Uno v0.5。這是獨立
 傳輸線的替代做法，不代表 v0.5 Uno 韌體本身支援 TiLP。
 
-**如果日後要再更新計算機端 `.8xp`**，使用同一 Uno 時仍須切回
+**如果日後要再更新計算機端 `.8xk`／`.8xp`**，使用同一 Uno 時仍須切回
 `serial2ti83` 來傳檔，再刷回 `CHAT83_Uno_v05`；除非使用獨立
 TI 傳輸線。這是目前 v0.5 安裝工具鏈的限制。
 
@@ -94,7 +96,27 @@ OpenAI Responses API 需另外的 API Key（ChatGPT 訂閱不等於 API 憑證�
 需先在 PC 安裝 Ollama 並拉取模型。模型推論全在 PC／服務端完成，
 TI-83 Plus 不會儲存 API Key，也不會執行模型。
 
+### App 版與程式版
+
+- `CHAT83.8xk` 是用公開的 0104 金鑰簽章的 Flash App，存在 Flash 裡，
+  不佔 RAM，從 APPS 選單啟動，不受 `Asm(` 程式約 8.8 KB 的大小限制。
+  更新時直接用 TiLP 傳新版覆蓋。刪除方式：MEM → Mem Mgmt/Del → Apps。
+- `C83V5.8xp` 是同一份原始碼的 `Asm(` 程式版，保留作為備用。
+- 兩者執行時都會借用系統的 `plotSScreen`（圖形緩衝區）和
+  `appBackUpScreen` 存放快取與變數，所以離開後圖形畫面會重新繪製，
+  這是正常現象。
+
 ## 操作
+
+畫面配置（16 欄 × 8 列）：
+
+```text
+█ CHAT83 V0.5  AI█   標題列；右側 AI＝模型生成中、ERR＝模型錯誤
+YOU: HELLO      ┊    歷史 6 列，每列 12 字
+█PC: WORLD    █ ┃    選取的列以反白顯示
+...             ┊    右側捲動條：位置與長度對應 48 行快取
+█ ENTER:ASK      █   按鍵提示；生成中顯示 MODE:STOP，預取中顯示 LOADING...
+```
 
 **歷史瀏覽**
 - ↑／↓：本機 48 行 Ring Buffer 捲動；靠近前後 1/3 時預取六行。
@@ -104,7 +126,11 @@ TI-83 Plus 不會儲存 API Key，也不會執行模型。
 - CLEAR：退出程式。
 
 **文字編輯器**
-- 預設 ALPHA ON，按計算機印有 A–Z 的實體按鍵可輸入英文字母。
+- 第 2 列右側顯示已輸入字數（例如 `12/48`）；插入點是反白方塊，
+  方塊內的字仍看得到；最下方提示列顯示目前輸入模式（`A-Z`／`0-9`）
+  與 ENTER 的作用（`ENTER:SEND`，模型生成中為 `AI WORKING`）。
+- 預設 ALPHA ON，按計算機鍵帽上方印有 A–Z 的實體按鍵可輸入英文
+  字母（例如 x⁻¹ 是 D、SIN 是 E）；`.` 鍵輸入 `:`、`(-)` 鍵輸入 `?`。
 - ALPHA：切換英文字母／數字符號模式。
 - 2nd：插入空格；在 ALPHA 模式按 0 也輸入空格。
 - ←／→：移動插入游標；DEL：刪除游標左側字元。
@@ -215,6 +241,20 @@ TI ROM `_SendAByte` 發送路徑，發送短命令／最多 48 字元輸入時�
 阻塞；接收、歷史與鍵盤主循環則是合作式非阻塞。不中斷鍵盤的程度需要
 在實機量測，而不是單憑 CI 推估。
 
+## 用模擬器預覽 UI（不需要 PC 或 Uno）
+
+`C83DEMO.8xk`（或 `C83DEMO.8xp`）是**離線示範版**：內建一段假的對話，
+提問時在計算機端直接回覆，完全不使用連線埠。適合在模擬器裡看介面、
+練習按鍵，或在 ERR:LINK 解決前先檢查畫面。
+
+1. 安裝支援原版 TI-83 Plus 的模擬器，例如 Windows 上的 Wabbitemu。
+2. 需要**你自己的 ROM 檔**（有版權，無法隨專案提供）。可以在原版
+   serial2ti83 韌體下用 TiLP 從自己的計算機傾印 ROM。
+3. 把 `C83DEMO.8xk` 拖進模擬器，按 APPS 選 `C83DEMO`。標題列會顯示
+   `CHAT83 DEMO`。
+
+示範版和正式版共用同一份 UI 程式碼，只差在不連線。
+
 ## 開發驗證
 
 GitHub Actions 同時執行：
@@ -222,7 +262,15 @@ GitHub Actions 同時執行：
 - Python 3.11 unittest 全部歷史回歸，COBS/CRC8/USB-credit、LLM 串流
   和 48 行 Ring Buffer 隨機換頁測試。
 - Arduino IDE/CLI **arduino:avr:uno** 韌體編譯。
-- SPASM-ng Z80 組譯 `C83V5.8xp`。
-- 最終 CI 把三者與說明、PowerShell 腳本打包為 Windows 測試套件。
+- SPASM-ng（含 GMP/OpenSSL，可簽章）組譯 `C83V5.8xp`、`CHAT83.8xk`、
+  `C83DEMO.8xk`、`C83DEMO.8xp`，並用 RabbitSign 驗證 App 簽章。
+- **Z80 模擬測試**（`tests/test_v05_z80_emulator.py`）：在 Z80 核心上
+  執行實際組譯出的程式版、App 版和示範版，攔截 ROM 呼叫並模擬
+  Port 00h/05h 與 LCD，連接真正的 `bridge_v05.ConversationEngine`。
+  涵蓋 SYNC、提問與串流回覆、MODE 取消、48 行快取環繞、反白選取、
+  捲動條像素與 A–Z 鍵位；截圖上傳為 `CHAT83-v05-ui-screenshots`。
+- 最終 CI 把上述檔案與說明、PowerShell 腳本打包為 Windows 測試套件。
 
-這些可自動化項目**不能替代實體 Uno 的 bit-level 時序測試**。
+這些可自動化項目**不能替代實體 Uno 的 bit-level 時序測試**。Z80 模擬
+測試沒有真正的 TI ROM：`_PutMap` 的字形、`LCD_BUSY_QUICK` 的延遲、
+中斷、APD 和連線電氣時序都不在測試範圍內。

@@ -47,7 +47,10 @@ bridge/
   requirements*.txt
 windows/
   start-chat83-v05.ps1    # v0.5 PowerShell launcher
-tests/                    # Python unit tests + native Uno handshake mock
+tests/                    # Python unit tests, native Uno handshake mock,
+                          # Z80 emulator tests (tests/emulator/)
+tools/
+  ti_0104_pubkey.py       # public app-signing key for RabbitSign checks
 docs/
   protocol.md             # v0.2 wire format
   protocol-v03.md         # v0.3.1/v0.3.2 wire format
@@ -111,7 +114,7 @@ The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating
 ## Experimental v0.4 and v0.5
 
 - **v0.4** (`C83V4`, `bridge_v04.py`, upstream serial2ti83): non-blocking receive through the original TI-83 Plus Port 00h/05h receive assist, `_GetCSC` keyboard polling and a 48-row predictive cache. See [v04-cooperative-link.md](docs/v04-cooperative-link.md).
-- **v0.5** (`C83V5`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. **Not working on hardware yet**: the calculator currently reports `ERR:LINK`. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
+- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Not working on hardware yet**: the calculator currently reports `ERR:LINK`. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
 
 Both run on the **original TI-83 Plus only**; port 05h means something different on the TI-83 Plus SE and TI-84 Plus.
 
