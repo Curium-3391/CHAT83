@@ -6,7 +6,7 @@ import time
 import unittest
 
 from bridge_v03 import db_connect, save_message
-from bridge_v05 import ConversationEngine, StableRows
+from bridge_v05 import ConversationEngine, StableRows, serve
 from protocol_v05 import (
     BUSY, NEWER, RESET, Chunk, RangeRequest,
     encode_chunk, decode_chunk, encode_fetch, decode_fetch,
@@ -221,6 +221,36 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.engine.reply_retry(encode_retry(response[1])), response)
         with self.assertRaises(ValueError):
             self.engine.reply_retry(encode_retry(47))
+
+    def test_host_turnaround_delay_and_pre_tx_request_log(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        class Once:
+            debug_link = True
+            gap_ms = 35
+            def __init__(self):
+                self.called = False
+                self.sent = []
+            def read(self, n):
+                if not self.called:
+                    self.called = True
+                    return b"S"
+                raise KeyboardInterrupt
+            def write(self, packet):
+                self.sent.append(packet)
+                return len(packet)
+        link = Once()
+        captured = io.StringIO()
+        with patch("bridge_v05.time.sleep") as delay, contextlib.redirect_stdout(captured):
+            with self.assertRaises(KeyboardInterrupt):
+                serve(link, self.engine, reply_delay_ms=250)
+        delay.assert_called_once_with(0.25)
+        self.assertEqual(len(link.sent), 1)
+        self.assertEqual(len(link.sent[0]), 9)
+        self.assertIn("[TX-BEGIN] SYNC: 9 bytes", captured.getvalue())
+        self.assertIn("turnaround=250ms", captured.getvalue())
+        self.assertIn("SYNC -> 0 rows", captured.getvalue())
 
     def test_parse_q_request(self):
         serial = MockUsbSerial()
