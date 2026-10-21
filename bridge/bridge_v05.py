@@ -392,6 +392,9 @@ def main():
     ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     ap.add_argument("--gap-ms", type=int, default=35,
                     help="Uno inter-byte Link gap (2..50 ms; first hardware test keep 35)")
+    ap.add_argument("--batch-pause-ms", type=int, default=0,
+                    help="experimental: extra quiet period (0..1000 ms) BETWEEN fully "
+                         "ACKed 16-byte Uno TX batches; try 150 after FETCH @16 failure")
     ap.add_argument("--max-context-chars", type=int, default=8000)
     ap.add_argument("--word-wrap", action="store_true",
                     help="experiment: wrap Gemini output at word boundaries in 12 columns")
@@ -406,6 +409,8 @@ def main():
     args = ap.parse_args()
     if not 2 <= args.gap_ms <= 50:
         ap.error("--gap-ms must be 2..50")
+    if not 0 <= args.batch_pause_ms <= 1000:
+        ap.error("--batch-pause-ms must be 0..1000")
     if not 0 <= args.reply_delay_ms <= 1500:
         ap.error("--reply-delay-ms must be 0..1500")
     model = args.model or {"demo": "offline", "gemini": "gemini-3.5-flash-lite",
@@ -421,7 +426,8 @@ def main():
                            write_timeout=5) as ser:
             time.sleep(2.5)  # Arduino Uno auto-reset on serial open.
             ser.reset_input_buffer()
-            link = UnoUsb(ser, gap_ms=args.gap_ms, timeout=10)
+            link = UnoUsb(ser, gap_ms=args.gap_ms, timeout=10,
+                          batch_pause_ms=args.batch_pause_ms)
             link.connect()  # refuses to run with upstream serial2ti83 firmware.
             print(f"CHAT83 Uno v0.5 handshake OK; gap {args.gap_ms}ms")
             if args.debug_link:
