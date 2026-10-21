@@ -19,6 +19,11 @@ MockSerial Serial;
 
 #include "../../arduino/CHAT83_Uno_v05/CHAT83_Uno_v05.ino"
 
+// Lock in the real user's 2.5mm connector wiring. Tests that use TIP/RING
+// symbolic constants otherwise pass even if both constants are wrong.
+static_assert(TIP == 3, "CHAT83 physical TIP is D3, not upstream D2");
+static_assert(RING == 6, "CHAT83 physical RING is D6, not upstream D3");
+
 static void require(bool okay, const char *problem) {
     if (!okay) {
         std::fprintf(stderr,
