@@ -1,6 +1,8 @@
 /*
  * CHAT83 Uno transport v0.5
- * Target: Arduino Uno / ATmega328P 16 MHz, TIP=D2, RING=D3, GND=GND.
+ * Target: Arduino Uno / ATmega328P 16 MHz, User's actual hardware: TIP=D2, RING=D6, GND=GND.
+ * Upstream jw0k/serial2ti83 defaults to D3 for RING instead; do NOT assume
+ * upstream cable wiring. Match this pin to the physical Arduino wiring.
  *
  * PC USB UART: 115200 baud, COBS-terminated packets (0x00 delimiter).
  * Decoded packet format: [type, fields..., CRC8(poly 0x07)].
@@ -29,7 +31,7 @@
 #include <Arduino.h>
 
 static const uint8_t TIP = 2;
-static const uint8_t RING = 3;
+static const uint8_t RING = 6;  // Physical CHAT83 setup, NOT upstream D3
 static const uint8_t MAX_TX = 16;
 static const uint8_t MAX_WIRE = 36;
 static const uint32_t BIT_TIMEOUT_US = 50000UL;
