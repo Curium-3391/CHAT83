@@ -107,12 +107,12 @@ class UsbTests(unittest.TestCase):
         serial = MockUsbSerial()
         link = UnoUsb(serial, timeout=0.005)
         link.connect()
-        serial.out.extend(make_frame(b"E\\x05"))
+        serial.out.extend(make_frame(bytes([ord("E"), 5])))
         with self.assertRaisesRegex(LinkFailure, "Arduino error code 5"):
             link.read(1)  # normal operation must remain fail-fast
 
         link.enable_link_diagnostics()
-        serial.out.extend(make_frame(b"E\\x05"))
+        serial.out.extend(make_frame(bytes([ord("E"), 5])))
         # Diagnostic counters reflect one observed start, no completed ACK,
         # a receive timeout and one LOW line at the time of the snapshot.
         report = bytes([ord('J'), 1, 0, 0, 0, 0, 0,
