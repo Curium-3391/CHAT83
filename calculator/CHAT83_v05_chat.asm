@@ -33,6 +33,8 @@
 
 CACHE_ROWS EQU 48
 MAX_INPUT EQU 48
+ERROR_RECEIVE EQU 1      ; error_flag: bad or missing C frame after retries
+ERROR_SEND    EQU 2      ; error_flag: _SendAByte raised ERR:LINK
 
 start:
     xor a
@@ -46,16 +48,20 @@ start:
     ld hl,history_cache
     ld bc,CACHE_ROWS*13
     call zero_fill
+    ; Catch OS errors raised inside bcalls. _SendAByte raises ERR:LINK when
+    ; the PC/Uno side does not complete the handshake; without a handler
+    ; the OS would show ERR:LINK and end the program. Must be installed at
+    ; this stack depth: the OS unwinds SP to here before jumping to the trap.
+    ; Every build installs it, because exit_program always removes it.
+    ld hl,os_error_trap
+    call APP_PUSH_ERRORH
 #ifdef CHAT83_UI_DEMO
     call demo_seed
     call draw_history
     jp main_loop
 #endif
     call draw_loading
-    ld a,'S'
-    ld (request_kind),a
-    bcall(_SendAByte)
-    call enable_rx
+    call send_sync
 
 main_loop:
     call poll_rx
@@ -96,6 +102,8 @@ loop_live:
     jp main_loop
 
 exit_program:
+    call APP_POP_ERRORH
+exit_after_trap:                     ; the OS already removed the handler
     xor a
     out (00h),a
     set graphDraw,(iy+graphFlags)  ; history_cache overwrote plotSScreen
@@ -105,6 +113,30 @@ exit_program:
 #else
     ret
 #endif
+
+; OS error raised in a bcall. The OS has restored SP to its value when
+; os_error_trap was installed and removed the handler; A = error code.
+; ERR:BREAK (ON key) exits. Anything else, in practice ERR:LINK from
+; _SendAByte, abandons the request and shows CHAT83's own error screen,
+; from which MODE resynchronizes.
+os_error_trap:
+    and E_Mask
+    cp E_Break & E_Mask
+    jr z,exit_after_trap
+    xor a
+    out (00h),a              ; release the link and receive assist
+    ld (request_kind),a
+    ld (pending_enter),a
+    ld (pending_cancel),a
+    ld (pending_scroll),a
+    ld (input_mode),a
+    call reset_receiver_state
+    ld a,ERROR_SEND
+    ld (error_flag),a
+    ld hl,os_error_trap
+    call APP_PUSH_ERRORH
+    call draw_error
+    jp main_loop
 
 ; HL = start, BC = length (>= 2). Clears BC bytes.
 zero_fill:
@@ -204,7 +236,7 @@ packet_error:
     ld (request_kind),a
     ld (rx_pos),a
     ld (crc_state),a
-    inc a
+    ld a,ERROR_RECEIVE
     ld (error_flag),a
     call draw_error
     ret
@@ -817,14 +849,44 @@ history_key:
 history_not_error:
     ld a,b
     cp skEnter
-    jr z,request_input
+    jp z,request_input
     cp skMode
     jp z,maybe_cancel_model
     cp skUp
     jp z,key_up
     cp skDown
     jp z,key_down
+    cp skGraph
+    jp z,key_newest
     ret
+
+; GRAPH: select the newest row. Local when the newest rows are cached;
+; otherwise SYNC replaces the cache with them, keeping history on screen
+; (LOADING in the hint bar) until the reply arrives.
+key_newest:
+    xor a
+    ld (direction),a
+    ld (pending_scroll),a
+    ld a,(page_flags)
+    and 2
+    jr nz,newest_remote
+    ld a,(cache_count)
+    or a
+    ret z
+    dec a
+    ld (cursor_off),a
+    sub 5
+    jr nc,newest_view
+    xor a
+newest_view:
+    ld (view_off),a
+    jp draw_history
+newest_remote:
+    ld a,(request_kind)
+    or a
+    ret nz                   ; a frame is in flight; press GRAPH again after
+    call send_sync
+    jp draw_load_status
 request_exit:
     ld a,1
     ld (exit_flag),a
@@ -849,15 +911,17 @@ restart_sync:
     xor a
     ld (error_flag),a
     ld (retry_count),a
+    call draw_loading
+    jp send_sync
+
+; Request the newest rows (the reply RESETs the cache).
+send_sync:
     call disable_rx
     ld a,'S'
-    bcall(_SendAByte)
-    ld a,'S'
     ld (request_kind),a
+    bcall(_SendAByte)
     call reset_receiver_state
-    call enable_rx
-    call draw_loading
-    ret
+    jp enable_rx
 
 send_cancel:
     call disable_rx
@@ -1022,7 +1086,11 @@ cursor_refresh:
     ld a,(prior_cursor)
     call draw_history_row
     ld a,(cursor_off)
-    jp draw_history_row
+    call draw_history_row
+    ld a,(pending_scroll)
+    or a
+    ret nz                   ; keep LOADING... while a boundary fetch waits
+    jp draw_hint_bar
 
 maybe_prefetch:
     ld a,(request_kind)
@@ -1906,11 +1974,19 @@ draw_error:
     xor a
     ld hl,error_title
     call draw_bar
-    ld a,2
     ld hl,error_text
+    ld de,error_text2
+    ld a,(error_flag)
+    cp ERROR_SEND
+    jr nz,error_lines
+    ld hl,send_error_text
+    ld de,send_error_text2
+error_lines:
+    push de
+    ld a,2
     call put_line
+    pop hl
     ld a,3
-    ld hl,error_text2
     call put_line
     ld a,5
     ld hl,retry_text
@@ -1932,21 +2008,45 @@ draw_status_bars:
     ld a,13
     ld hl,err_label
     call draw_bar_tag
-    jr status_hint
+    jr draw_hint_bar
 status_no_error:
     ld a,(busy_flag)
     or a
-    jr z,status_hint
+    jr z,status_not_busy
     ld a,14
     ld hl,live_label
     call draw_bar_tag
-status_hint:
-    ld hl,ask_hint
+    jr draw_hint_bar
+status_not_busy:
+    ld a,(request_kind)
+    cp 'Q'
+    jr nz,draw_hint_bar
+    ld a,13
+    ld hl,wait_label         ; question sent, first reply not yet in
+    call draw_bar_tag
+
+; Row 7: MODE:STOP while the model generates; GRAPH:END when the newest
+; row is not selected (scrolled up, or newer rows only on the PC).
+draw_hint_bar:
+    ld hl,stop_hint
     ld a,(busy_flag)
     or a
-    jr z,status_hint_draw
-    ld hl,stop_hint
-status_hint_draw:
+    jr nz,hint_draw
+    ld hl,end_hint
+    ld a,(page_flags)
+    and 2
+    jr nz,hint_draw
+    ld a,(cache_count)
+    or a
+    jr z,hint_ask
+    dec a
+    ld b,a
+    ld a,(cursor_off)
+    cp b
+    jr nz,hint_draw
+hint_ask:
+    ld hl,ask_hint
+hint_draw:
     ld a,7
     jp draw_bar
 
@@ -2140,16 +2240,20 @@ connect_text2:  .db "the PC...",0
 error_title:    .db " LINK ERROR",0
 error_text:     .db "No valid reply",0
 error_text2:    .db "from the PC.",0
+send_error_text: .db "Could not send",0
+send_error_text2: .db "to the PC/Uno.",0
 retry_text:     .db "MODE:  retry",0
 quit_text:      .db "CLEAR: quit",0
 empty_text:     .db "No history.",0
 ask_hint:       .db " ENTER:ASK",0
+end_hint:       .db " ENTER GRAPH:END",0
 stop_hint:      .db " MODE:STOP",0
 loading_hint:   .db " LOADING...",0
 quit_hint:      .db " CLEAR:QUIT",0
 retry_hint:     .db " MODE:RETRY",0
 live_label:     .db "AI",0
 err_label:      .db "ERR",0
+wait_label:     .db "...",0
 count_suffix:   .db "/48",0
 alpha_hint:     .db " A-Z",0
 number_hint:    .db " 0-9",0

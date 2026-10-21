@@ -25,11 +25,11 @@ BUILD = os.environ.get("CHAT83_Z80_BUILD")
 SHOTS = os.environ.get("CHAT83_SCREENSHOT_DIR")
 try:
     import z80  # noqa: F401
-    from ti83p_harness import Harness, LinkPeer, render_png
+    from ti83p_harness import ERR_BREAK, ERR_LINK, Harness, LinkPeer, render_png
 except ImportError:  # plain Python job: no emulator packages
     Harness = None
 
-from bridge_v03 import db_connect
+from bridge_v03 import db_connect, save_message
 from bridge_v05 import ConversationEngine
 from providers_v05 import DemoProvider
 
@@ -122,6 +122,7 @@ class Z80ClientTests(unittest.TestCase):
         self.shot(h, f"{name.split('.')[0]}_answer")
         h.press(h.sk("Clear"))
         self.assertTrue(h.exited)
+        self.assertEqual(h.error_handlers, [], "OS error handler left installed")
 
     def test_program_round_trip(self):
         self.check_round_trip("program.bin")
@@ -146,6 +147,7 @@ class Z80ClientTests(unittest.TestCase):
         self.shot(h, "demo_answer")
         h.press(h.sk("Clear"))
         self.assertTrue(h.exited)
+        self.assertEqual(h.error_handlers, [])
 
     def assert_bars(self, h, title, hint):
         """Rows 0 and 7 are full-width inverse bars."""
@@ -225,6 +227,95 @@ class Z80ClientTests(unittest.TestCase):
             time.sleep(0.02)
         self.assert_bars(h, " CHAT83 V0.5", " ENTER:ASK")
         self.assertEqual(h.screen.text(0)[14:], "  ")
+
+    def test_link_down_shows_error_screen_and_mode_recovers(self):
+        """ERR:LINK from _SendAByte no longer ends the program."""
+        h = self.harness("app.bin")
+        h.link_down = True                          # the startup S fails
+        h.run_until_idle()
+        self.assertFalse(h.exited)
+        self.assertEqual(h.os_errors, [ERR_LINK])
+        self.assertTrue(h.screen.text(0).startswith(" LINK ERROR"), h.screen.dump())
+        self.assertIn("Could not send", h.screen.dump())
+        self.assertEqual(len(h.error_handlers), 1)  # trap re-installed itself
+        # The stack depth at which the handler is (re)installed must not
+        # drift, or each error would leak stack.
+        handler_sp = h.error_handlers[0][1]
+        self.shot(h, "ui_link_error")
+        for _ in range(5):                          # retries while still down
+            h.press(h.sk("Mode"))
+            self.assertIn("Could not send", h.screen.dump())
+            self.assertEqual(h.error_handlers, [(h.error_handlers[0][0], handler_sp)],
+                             "stack leaked by the error trap")
+        h.link_down = False
+        h.press(h.sk("Mode"))
+        self.assertEqual(h.peer.log[-1][0], b"S")
+        self.assertIn("No history.", h.screen.dump())
+        self.assertEqual(h.error_handlers[0][1], handler_sp)
+        self.ask_numbers(h, "5")
+        self.wait_for_text(h, "YOU: 5")
+        h.press(h.sk("Clear"))
+        self.assertTrue(h.exited)
+        self.assertEqual(h.error_handlers, [])
+
+    def test_on_key_break_exits_cleanly(self):
+        h = self.harness("program.bin")
+        h.bcalls[h.eq["_SendAByte"]] = lambda: h.raise_os_error(ERR_BREAK)
+        h.run_until_idle()
+        self.assertTrue(h.exited)
+        self.assertEqual(h.error_handlers, [])
+
+    def test_receive_error_screen_text(self):
+        """A corrupt reply (after 3 retries) names the reply, not the send."""
+        h = self.harness("program.bin")
+        def corrupt(request):
+            packet = self.respond(request)
+            return packet[:-1] + bytes([packet[-1] ^ 1])
+        h.peer.respond = corrupt
+        h.run_until_idle()
+        self.assertIn("No valid reply", h.screen.dump())
+        self.assertEqual([r[:1] for r, _ in h.peer.log], [b"S", b"R", b"R", b"R"])
+
+    def test_waiting_tag_until_first_reply(self):
+        h = self.harness("program.bin")
+        h.run_until_idle()
+        h.peer.hold = True
+        self.ask_numbers(h, "8")
+        self.assertEqual(h.screen.text(0)[13:], "...")
+        h.peer.release()
+        self.wait_for_text(h, "YOU: 8")
+        self.assertEqual(h.screen.text(0)[13:], "   ")
+
+    def test_graph_jumps_to_newest_locally(self):
+        h = self.harness("demoapp.bin", peer=False)
+        h.run_until_idle()
+        h.press(*[h.sk("Up")] * 10)
+        self.assertEqual(h.screen.text(7).rstrip(), " ENTER GRAPH:END")
+        h.press(h.sk("Graph"))
+        self.assertEqual(self.selected_rows(h), [6])
+        self.assertTrue(h.screen.text(6).startswith("type."))
+        self.assertEqual(h.screen.text(7).rstrip(), " ENTER:ASK")
+
+    def test_graph_resyncs_when_newest_rows_left_the_cache(self):
+        for i in range(120):
+            save_message(self.db, "assistant", f"LINE {i:03d}")
+        h = self.harness("program.bin")
+        h.run_until_idle()
+        self.assertTrue(h.screen.text(6).startswith("PC: LINE 119"))
+        for _ in range(70):                          # scroll far into the past
+            h.press(h.sk("Up"))
+        self.assertTrue(h.var("page_flags") & 2, "newest rows should be evicted")
+        self.assertEqual(h.screen.text(7).rstrip(), " ENTER GRAPH:END")
+        h.peer.hold = True
+        h.press(h.sk("Graph"))
+        self.assertEqual(h.peer.log[-1][0], b"S")
+        self.assertEqual(h.screen.text(7).rstrip(), " LOADING...")
+        self.assertIn("PC: LINE 0", h.screen.text(1))  # old rows stay visible
+        h.peer.release()
+        h.run_until_idle()
+        self.assertTrue(h.screen.text(6).startswith("PC: LINE 119"), h.screen.dump())
+        self.assertEqual(self.selected_rows(h), [6])
+        self.assertEqual(h.screen.text(7).rstrip(), " ENTER:ASK")
 
     def test_demo_program_wraps_cache(self):
         """Six answers push the 28 seeded rows past the 48-row cache."""

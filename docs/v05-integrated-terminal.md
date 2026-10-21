@@ -111,19 +111,32 @@ TI-83 Plus 不會儲存 API Key，也不會執行模型。
 畫面配置（16 欄 × 8 列）：
 
 ```text
-█ CHAT83 V0.5  AI█   標題列；右側 AI＝模型生成中、ERR＝模型錯誤
+█ CHAT83 V0.5  AI█   標題列；右側 AI＝模型生成中、ERR＝模型錯誤、...＝等待 PC 回覆
 YOU: HELLO      ┊    歷史 6 列，每列 12 字
 █PC: WORLD    █ ┃    選取的列以反白顯示
 ...             ┊    右側捲動條：位置與長度對應 48 行快取
-█ ENTER:ASK      █   按鍵提示；生成中顯示 MODE:STOP，預取中顯示 LOADING...
+█ ENTER:ASK      █   按鍵提示；生成中 MODE:STOP、預取中 LOADING...、
+                     沒選在最新一列時 ENTER GRAPH:END
 ```
 
 **歷史瀏覽**
 - ↑／↓：本機 48 行 Ring Buffer 捲動；靠近前後 1/3 時預取六行。
   若在資料尚未下載的邊界連續按方向鍵，可暫存最多 12 次的方向意圖。
 - ENTER：進入四行文字編輯器。
+- GRAPH：跳到最新一列。最新幾列還在快取時直接跳過去；已被淘汰時
+  送出 SYNC 重新載入，等待期間歷史畫面保留，提示列顯示 LOADING...。
 - MODE：模型正在生成時要求取消；若在 LINK ERROR 畫面，重新 SYNC。
-- CLEAR：退出程式。
+- CLEAR：退出程式。ON 鍵在傳送中按下也會正常離開。
+
+**連線錯誤不再跳出程式**：送出資料時如果 Uno／PC 沒有完成握手，
+ROM 會產生 ERR:LINK。新版 CHAT83 會攔截這個錯誤，顯示自己的
+`LINK ERROR` 畫面，不會再出現原廠的 `ERR:LINK / 1:Quit / 2:Goto`。
+畫面文字會區分原因：
+- `Could not send to the PC/Uno.`：計算機送不出去（握手失敗）。
+- `No valid reply from the PC.`：送出了，但回覆三次 CRC 錯誤或逾時。
+
+按 MODE 重新同步，修好連線後不必重新啟動程式。
+如果 Python Bridge 因為收到不完整的請求而停止，要先重新啟動 Bridge。
 
 **文字編輯器**
 - 第 2 列右側顯示已輸入字數（例如 `12/48`）；插入點是反白方塊，
@@ -173,6 +186,10 @@ TI 端使用短 `U` 查詢拉取新行，不接收未要求的資料。中文／
 `ERR:LINK / 1:Quit / 2:Goto`，PC 沒有出現 `SYNC`。
 這是 **PC↔Uno USB 已確認、Uno↔TI Link 尚未驗證** 的狀況。
 不要因為 Python 的 USB handshake OK 就宣稱整條電纜正常。
+
+**使用新版 CHAT83.8xk／C83V5.8xp 時**，同樣的故障會改成顯示 CHAT83
+自己的 `LINK ERROR`／`Could not send to the PC/Uno.` 畫面，程式不會
+結束，可以一邊看 `[UNO-DIAG]` 一邊按 MODE 重試。
 
 此候選版已新增 **Uno RX_ACK_SETTLE** 狀態：接收一個 bit 並釋放 ACK 後，
 暫時等待線路經弱上拉回升，避免把自己的 ACK 殘留低電位誤讀成下一個 bit。

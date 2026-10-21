@@ -44,6 +44,7 @@
 - The calculator client also builds as a signed Flash App (`CHAT83.8xk`, APPS menu). Writable state moved out of the program image into `plotSScreen`/`appBackUpScreen`; `_PutS` was replaced because a bcall hides App strings from the OS.
 - UI: inverse title/hint bars, inverse selected row, pixel scrollbar, block cursor and length counter, flicker-free redraws. Fixed the ALPHA letter table, which was shifted from D onward.
 - `C83DEMO` offline build and a ROM-free Z80 harness that runs the real builds against `bridge_v05.ConversationEngine` in CI.
+- TI-side reliability: an OS error handler turns ERR:LINK from `_SendAByte` into CHAT83's own LINK ERROR screen (MODE retries, no exit); ON still exits. GRAPH jumps to the newest row (SYNC when it left the cache), `...` shows while a question waits for its first reply, and the hint bar offers GRAPH:END when scrolled away.
 - **Status:** CI- and emulator-tested only. Not yet run on a physical TI-83 Plus, and the v0.5 `ERR:LINK` is still open.
 
 ## Roadmap

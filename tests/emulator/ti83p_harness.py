@@ -5,6 +5,11 @@ core (the `z80` PyPI package) and replaces only what CHAT83 touches:
 
 - bcall (rst 28h) for _PutC, _PutMap, _ClrLCDFull, _HomeUp, _GetCSC and
   _SendAByte, plus bjump(_JForceCmdNoChar) for the App exit path.
+- APP_PUSH_ERRORH / APP_POP_ERRORH (call 59h / 5Ch) and OS error delivery:
+  `link_down` makes _SendAByte raise ERR:LINK, `raise_os_error` injects
+  any error. Like the OS, an error restores SP to its value when the
+  handler was installed, drops the handler and jumps to it with A = code.
+  The real OS keeps the frame on the stack; here it is kept in Python.
 - Port 00h/05h receive assist: bit 3 of port 00h reports a byte waiting,
   IN (05h) takes it. Bytes are only offered while bit 2 (assist) is on.
 - Ports 10h/11h: enough of the T6A04 LCD driver for direct pixel writes.
@@ -27,6 +32,9 @@ import z80
 
 ROWS, COLS = 8, 16
 SENTINEL = 0x0100          # return address pushed for the program's final RET
+# OS error codes as delivered in A (ti83plus.inc: E_EDIT = 80h).
+ERR_BREAK = 0x80 | 6       # E_Break: ON pressed
+ERR_LINK = 0x80 | 31       # E_LnkErr: _SendAByte handshake failed
 
 
 class Equates(dict):
@@ -94,6 +102,8 @@ class LinkPeer:
         self.request = bytearray()
         self.incoming = deque()
         self.log: list[tuple[bytes, bytes]] = []
+        self.hold = False          # queue replies until release()
+        self.held = deque()
 
     def calc_sent(self, value: int):
         self.request.append(value)
@@ -105,7 +115,12 @@ class LinkPeer:
         self.request.clear()
         reply = self.respond(request)
         self.log.append((request, reply))
-        self.incoming.extend(reply)
+        (self.held if self.hold else self.incoming).extend(reply)
+
+    def release(self):
+        self.hold = False
+        self.incoming.extend(self.held)
+        self.held.clear()
 
 
 class Harness:
@@ -131,6 +146,9 @@ class Harness:
         self.idle_csc = 0          # consecutive _GetCSC calls that returned 0
         self.exited = False
         self.port0 = 0
+        self.error_handlers: list[tuple[int, int]] = []   # (handler, sp)
+        self.link_down = False
+        self.os_errors: list[int] = []                     # errors raised
         self.lcd_x = 0             # row (0..63)
         self.lcd_y = 0             # byte column (0..11)
         self.lcd_mode = 0x05       # OS default: X (row) auto-increment
@@ -146,7 +164,7 @@ class Harness:
         base = 0x4000 if app else self.eq["userMem"] - 2
         self.m.set_memory_block(base, image)
         self.m.set_memory_block(0x000B, b"\xC9")   # LCD_BUSY_QUICK: ret
-        for addr in (0x28, 0x50, SENTINEL):
+        for addr in (0x28, 0x50, 0x59, 0x5C, SENTINEL):
             self.m.set_breakpoint(addr)
         self.m.iy = self.eq["flags"]
         self.m.sp = 0xFFF0
@@ -211,7 +229,20 @@ class Harness:
             self.m.a = 0
             self.idle_csc += 1
 
+    def raise_os_error(self, code: int):
+        """What the OS does on an error inside a bcall."""
+        self.os_errors.append(code)
+        if not self.error_handlers:
+            raise AssertionError(f"OS error {code:02X} escaped to the OS (no handler)")
+        handler, sp = self.error_handlers.pop()
+        self.m.sp = sp
+        self.m.a = code
+        self.m.pc = handler
+
     def _send_a_byte(self):
+        if self.link_down:
+            self.raise_os_error(ERR_LINK)
+            return
         if self.peer is None:
             raise AssertionError("program sent a link byte, but no peer is attached")
         self.peer.calc_sent(self.m.a)
@@ -261,6 +292,16 @@ class Harness:
             self.exited = True
             return
         ret = self._pop()
+        if pc == 0x59:                      # APP_PUSH_ERRORH, HL = handler
+            self.error_handlers.append((self.m.hl, self.m.sp))
+            self.m.pc = ret
+            return
+        if pc == 0x5C:                      # APP_POP_ERRORH
+            if not self.error_handlers:
+                raise AssertionError("APP_POP_ERRORH without a handler")
+            self.error_handlers.pop()
+            self.m.pc = ret
+            return
         target = self.peek(ret) | (self.peek(ret + 1) << 8)
         if pc == 0x50 and target == self.eq["_JForceCmdNoChar"]:
             self.exited = True
@@ -268,8 +309,8 @@ class Harness:
         stub = self.bcalls.get(target)
         if stub is None:
             raise AssertionError(f"unsupported bcall {target:04X} from {ret - 1:04X}")
-        stub()
         self.m.pc = (ret + 2) & 0xFFFF
+        stub()                              # may redirect pc (OS error)
 
     def run(self, max_instructions_ticks: int = 2_000_000):
         """Run for at most the given number of CPU ticks (stops on exit)."""
