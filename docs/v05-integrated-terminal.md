@@ -334,3 +334,51 @@ TIP=3、RING=6，加入 native C++ `static_assert` 防止將來倒退。
 同時採用這兩個腳位。如果已經使用正確的 3/6，則 E5 仍是真實握手
 失敗，需要進一步量測；不能直接宣告修改腳位已經解決故障。
 換上正確韌體之前先移除 TI 2.5mm 插頭，刷完再接回。
+
+
+### 2026-10-21 新突破：D3/D6 後完成 TI→PC SYNC，首次觀察到 PC→TI TX timeout
+
+**使用者的真機證據（TIP D3、RING D6，Uno v0.5，COM2，`--debug-link`）：**
+
+```text
+[UNO-DIAG] start=8 ack=8 rx_bytes=1 rx_to=0 tx_to=0 state=0 TIP=H RING=H last_rx=0x53
+SYNC -> 0 rows, flags=04, 9 bytes
+[UNO-DIAG] start=16 ack=16 rx_bytes=2 rx_to=0 tx_to=0 state=0 TIP=H RING=H last_rx=0x53
+SYNC -> 0 rows, flags=04, 9 bytes
+Uno link statistics: {'tx': 18, 'rx': 12, 'errors': 0, 'gap_ms': 35, 'rx_timeout_events': 0}
+LINK ERROR: Uno TI TX failed at 0: b'A\\x03\\x01'
+```
+
+**結論與限制：** 前兩次 `S` (0x53) 各完成 8-bit 接收，
+Windows 應用確實處理了兩個 SYNC，且 Uno 對兩筆 9-byte 返信批次
+回報成功（共 18 bytes）。第三筆 USB TX `A,seq=3,status=1`
+表示 **TI Link 發送逾時**；`at 0` 是該批次相對回覆的起始位址，
+**不能推斷第一個 byte 就失敗**，可能是在 16-byte 批次內某個
+較後面的 bit。Python 此時不會印 `SYNC/Q` 成功行，
+因為目前 `link.write` 回傳之後才會印出標籤。
+`rx=12` 包含兩個 SYNC 的 2 bytes，加上 10 bytes 其他 TI 請求，
+但未有故障前原始內容紀錄，尚不能確定第三個請求為何。
+
+**待證假說：** Z80 的 `input_send` 在發送完 `Q` 後
+`enable_rx` 隨即 `call draw_history`；PC 可能在畫面重繪期間
+開始送出較長的 C reply，導致未即時讀取 Port 05h 的單位元組
+接收緩衝，從而讓 Uno TX bit handshake 逾時。Z80 emulator
+沒有模擬實體 LCD/ROM 接收時序，CI 不能證明此假說。
+也不能排除 Uno TX FSM 自身的 ACK 時序問題。
+
+**無須更新 Uno/TI 的測試：** 僅替換新版本 `bridge_v05.py`，
+使用 `--reply-delay-ms 250` 在所有 PC→TI 回覆開始前延遲
+250ms，保持 `--gap-ms 35 --debug-link`。
+現在 bridge 會在真正 USB `T` 發送前記錄
+`[TX-BEGIN] Q '...': N bytes (M batches), turnaround=250ms`，
+有助確認失敗的命令與封包大小。若仍失敗，
+回報 `[TX-BEGIN]`、發生失敗時的 `[UNO-DIAG]`、
+計算機畫面及 `Uno TI TX failed...`；無須重複整份 idle 日誌。
+
+```powershell
+py "$HOME\\Downloads\\CHAT83_v05\\bridge_v05.py" --port COM2 --provider demo --gap-ms 35 --debug-link --reply-delay-ms 250
+```
+
+注意：250ms 是暫時診斷參數，預設仍是 0；若有效，
+應正式修正計算機端「接收時不可重畫完整 LCD」的時序，
+不能把人工延遲視為最終可靠性解決方案。
