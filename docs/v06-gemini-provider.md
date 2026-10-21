@@ -43,6 +43,15 @@ Existing `C83V5.8xp` / `CHAT83.8xk` and Uno firmware remain unchanged.
 - `DEFAULT_SYSTEM` requests concise plain-English ASCII; the existing
   `ascii_text` sanitizer and 12-column `StableRows` apply downstream,
   so non-ASCII output may display as `?`.
+- **Experimental GEMINI> display:** for `--provider gemini`, the bridge
+  writes a separate, padded `GEMINI>` row to SQLite **as soon as the question
+  is accepted**, before streaming starts. Answer text begins on the *next*
+  row at column 0, using **all 12 characters** instead of reserving the
+  four-column `PC: ` prefix. Each committed row remains immutable, so
+  `SYNC`, `FETCH OLDER`, `FETCH NEWER` and live `UPDATE` use the
+  existing packet format and consistent absolute row offsets.
+  No Z80 App or Uno firmware update is required, only the Python bridge.
+  `demo` and existing historical `PC:` display rows are unchanged.
 - All key material stays in the PC process. Never store API key in GitHub,
   SQLite messages, requests sent across the TI Link, or the calculator.
 - Missing `GEMINI_API_KEY` fails on provider startup; missing
@@ -102,3 +111,30 @@ matching completion log in the supplied excerpt before the next
 completed frame. The successful subsequent `UPDATE @1` and final
 counters establish the tested transport's progress.
 
+
+
+### GEMINI> answer layout (experimental display improvement)
+
+This is an example of the **12-character history text rows** carried by
+the wire protocol, not a full LCD screenshot. A `GEMINI>` header is one
+independent, persisted 12-character row:
+
+```text
+YOU: HELLO
+GEMINI>
+HELLO WORLD!
+FROM GEMINI.
+```
+
+The answer begins at the first column of the row after `GEMINI>`.
+For comparison, the former inline `PC: ` prefix left only eight cells for
+the first part of the answer. The model itself still receives only plain
+question/assistant message content, with no `GEMINI>` artificial text.
+Older assistant rows in an existing `chat83.sqlite3` DB remain unchanged.
+
+**Verification:** dedicated offline tests cover the 12-column width,
+immediate header while streaming is busy, multiple questions, legacy
+database rows, the immutable history indexes and `F`/`U` reply frames.
+Real TI-83 Plus LCD presentation of this **new layout** still needs user
+acceptance. Preserve known-good `--gap-ms 35 --reply-delay-ms 250`
+while checking it.
