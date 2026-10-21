@@ -101,6 +101,32 @@ class UsbTests(unittest.TestCase):
         self.assertIn("start=8 ack=8 rx_bytes=1", capture.getvalue())
         self.assertIn("last_rx=0x53", capture.getvalue())
 
+    def test_rx_timeout_e5_does_not_end_diagnostic_session(self):
+        import contextlib
+        import io
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, timeout=0.005)
+        link.connect()
+        serial.out.extend(make_frame(b"E\\x05"))
+        with self.assertRaisesRegex(LinkFailure, "Arduino error code 5"):
+            link.read(1)  # normal operation must remain fail-fast
+
+        link.enable_link_diagnostics()
+        serial.out.extend(make_frame(b"E\\x05"))
+        # Diagnostic counters reflect one observed start, no completed ACK,
+        # a receive timeout and one LOW line at the time of the snapshot.
+        report = bytes([ord('J'), 1, 0, 0, 0, 0, 0,
+                        1, 0, 0, 0, 2, 2, 0])
+        serial.out.extend(make_frame(report))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(link.read(1), b"")
+        self.assertIn("E5 RX handshake timeout", output.getvalue())
+        self.assertIn("start=1 ack=0 rx_bytes=0 rx_to=1", output.getvalue())
+        self.assertIn("TIP=L RING=H", output.getvalue())
+        self.assertEqual(link.rx_timeout_events, 1)
+        self.assertEqual(link.link_errors, 2)
+
     def test_bad_usb_crc_rejected(self):
         raw = bytearray(make_frame(b"Rz"))
         raw[-2] ^= 1
