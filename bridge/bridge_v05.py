@@ -262,8 +262,13 @@ class ConversationEngine:
 
 
 def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False,
-          adaptive: bool = False):
+          adaptive: bool = False, reply_delay_ms: int = 0):
     """Main thread owns UART and SQLite. Implicit next requests confirm receipt.
+
+    reply_delay_ms inserts host-side turnaround BEFORE the first TI byte of
+    EVERY application reply. This isolates calculator screen redraw/receive
+    assist starvation without changing inter-byte timing or Uno firmware.
+    The default remains zero until physical timing is validated.
 
     Adaptive pacing is conservative: with eight successful full exchanges,
     reduce only 2 ms at a time to a 12 ms floor. On an application CRC retry,
@@ -296,6 +301,14 @@ def serve(link: UnoUsb, engine: ConversationEngine, *, verbose: bool = False,
         if not is_retry:
             engine.last_reply = packet
             engine.retry_count = 0
+        if verbose or link.debug_link:
+            print(f"[TX-BEGIN] {label}: {len(packet)} bytes "
+                  f"({len(packet) + 15 >> 4} batches), "
+                  f"turnaround={reply_delay_ms}ms", flush=True)
+        if reply_delay_ms:
+            time.sleep(reply_delay_ms / 1000.0)
+        # Don't print the success label until the entire TI Link batch
+        # has been ACKed. TX-BEGIN makes failures identifiable by request.
         link.write(packet)
         info = f"{label} -> {packet[6]} rows, flags={packet[7]:02X}, {len(packet)} bytes"
         if verbose or not label.startswith("UPDATE") or packet[6] or not packet[7] & BUSY:
@@ -315,11 +328,16 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--debug-link", action="store_true",
                     help="ask patched Uno to report physical link counters every 500ms")
+    ap.add_argument("--reply-delay-ms", type=int, default=0,
+                    help="experiment: wait 0..1500 ms before PC sends a reply to TI; "
+                         "try 250 to test slow calculator redraw")
     ap.add_argument("--adaptive", action="store_true",
                     help="experimental rate tuning; enable only after baseline hardware validation")
     args = ap.parse_args()
     if not 2 <= args.gap_ms <= 50:
         ap.error("--gap-ms must be 2..50")
+    if not 0 <= args.reply_delay_ms <= 1500:
+        ap.error("--reply-delay-ms must be 0..1500")
     model = args.model or {"demo": "offline", "openai": "gpt-4.1-mini",
                            "ollama": "llama3.2"}[args.provider]
     provider = provider_factory(args.provider, model, args.ollama_url)
@@ -338,7 +356,8 @@ def main():
             if args.debug_link:
                 link.enable_link_diagnostics()
             try:
-                serve(link, engine, verbose=args.verbose, adaptive=args.adaptive)
+                serve(link, engine, verbose=args.verbose, adaptive=args.adaptive,
+                      reply_delay_ms=args.reply_delay_ms)
             finally:
                 print(f"Uno link statistics: {link.stats()}")
 
