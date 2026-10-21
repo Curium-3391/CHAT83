@@ -12,7 +12,7 @@ Original TI-83 Plus
   4×12B editor, 16-row predictive trigger, polling for live LLM rows
        | TIP / RING / GND (2.5mm link)
 Arduino Uno ATmega328P
-  D2 = TIP, D6 = RING, GND = sleeve
+  D3 = TIP, D6 = RING, GND = sleeve
   Open-drain bit handshake; cooperative FSM; <=16-byte USB TX credit
        | USB COM2, 115200 baud, COBS+CRC8 frames
 Windows PC
@@ -32,10 +32,11 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
 
 ## 第一次安裝：先傳 TI 程式，最後才刷 Uno v0.5
 
-**已確認接線：使用者的 Uno 是 D2=TIP、D6=RING、GND=sleeve。
-新版 v0.5 原始碼已採用 D6。上游 `serial2ti83` 預設 D3=RING，
-用同一條 D6 接線傳送 TiLP 檔案時也必須把上游 sketch 的 RING 改成 6，
-或實際改線；切勿只更新一邊。**
+**使用者已再次確認實際接線：TIP 接 D3，RING 接 D6，GND 接 sleeve。
+新版 v0.5 原始碼已同時採用 TIP=3、RING=6。上游 `serial2ti83` 預設
+TIP=2、RING=3；如果使用上游韌體配合這條線傳送 TiLP 檔案，必須
+**兩個常數一起改成 TIP=3、RING=6**，或者把實際接線改回上游標準。
+絕不能只改 RING。**
 
 **⚠️ 安裝順序極其重要：同一塊 Uno 使用兩種互不相容的韌體。**
 原版 `serial2ti83.ino` 是之前用來連接 TiLP 的 9600-baud 橋接器；
@@ -50,7 +51,7 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
    [jw0k/serial2ti83/serial2ti83.ino](https://github.com/jw0k/serial2ti83/blob/master/serial2ti83.ino)。
    若你的 Uno 已經刷成 CHAT83 v0.5，先關閉 Python Bridge／TiLP 與
    Arduino 序列監控器，再用 Arduino IDE 將上游原版 sketch 重新上傳。
-3. 用之前驗證過的 Uno TIP=D2／RING=D3／GND 接線，**在原版韌體下
+3. 用之前驗證過的 Uno TIP=D3／RING=D6／GND 接線，**在原版韌體下
    使用 TiLP 傳入 `CHAT83.8xk`**（建議，Flash App），確認計算機的
    **APPS** 選單出現 `CHAT83`。也可以改傳 `C83V5.8xp`，它會出現在
    PRGM 清單。兩者功能相同，可同時保留。完整關閉 TiLP，釋放 COM 埠。
@@ -58,7 +59,7 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
    `CHAT83_Uno_v05.ino`，板子選 Arduino Uno，重新上傳新的 v0.5
    韌體。上傳完成後關閉 Arduino IDE 的 Serial Monitor，重新接上
    計算機原本的 Link 接線。
-5. 確認接線：**Uno D2 → TIP、D6 → RING、GND → sleeve**。
+5. 確認接線：**Uno D3 → TIP、D6 → RING、GND → sleeve**。
    Arduino 只會把線路拉 LOW 或放開成 INPUT_PULLUP，
    不會主動強推 HIGH；禁止在未知硬體線路外加電壓。
 6. 在解壓縮套件的 PowerShell 工作目錄執行：
@@ -208,7 +209,7 @@ C++ 原韌體模擬回歸測試；**尚未有實機驗證它確實解決問題**
 1. 在 PowerShell 按 Ctrl+C，關閉 Arduino Serial Monitor。
 2. 拔下計算機的 Link 插頭，將套件中更新後的
    `CHAT83_Uno_v05.ino` 使用 Arduino IDE 重新上傳，之後把 Link
-   插頭接回原 D2/TIP、D6/RING、GND 接線。
+   插頭接回原 D3/TIP、D6/RING、GND 接線。
 3. 使用**新版** `bridge_v05.py` 搭配 `usb_v05.py`，用原本
    COM2 啟動：
 
@@ -300,7 +301,7 @@ GitHub Actions 同時執行：
 
 ### 2026-10-21 補充：確認 Uno E5 逾時與診斷修復
 
-使用者已更正實際接線：**D2=TIP、D6=RING**，不是上游標準 D3。
+最終由使用者更正實際接線：**D3=TIP、D6=RING**，與上游預設的 D2=TIP、D3=RING 都不同。
 先前刷的 Uno／Python 可正常 `handshake OK`，但在計算機 Link
 嘗試後，Python 最後報 `Arduino error code 5`（Uno 的
 `RX_WAIT_RELEASE` 等待 TI 釋放其起始位元的線路超過 30ms）。
@@ -312,6 +313,24 @@ GitHub Actions 同時執行：
 視為應記錄的 RX 逾時並繼續讀取 `J`，使用者可於計算機報錯後
 保留 Python 約兩秒、取得 `start/ack/rx_to/TIP/RING`，
 最後按 Ctrl+C。**其他錯誤仍會中止，平常未開 debug 仍對 E5 fail-fast。**
-新的 ZIP 中 Uno 韌體與原始碼預設 D6；如果實際 Uno 已自行修改並
-重新上傳使用 D6，僅需替換新版 `usb_v05.py` 即可先做診斷，
+新的 ZIP 中 Uno 韌體與原始碼預設 TIP=3、RING=6；如果實際 Uno 已自行修改並
+重新上傳採用 **兩個正確腳位**，僅需替換新版 `usb_v05.py` 即可先做診斷，
 不必重燒、也不必重傳計算機 App。實際握手仍未通過驗收。
+
+
+### 2026-10-21 第二次實機診斷：E5 後的計數器與最終腳位更正
+
+使用者在修正版 Python `--debug-link` 下取得成功保留的故障後數據：
+`start=84, ack=3, rx_bytes=0, rx_to=81, tx_to=0`，中途曾見
+`state=1 TIP=L RING=L`，最終閒置時兩線為 HIGH。
+這證明 Uno 的接收 FSM 多次進入等待並逾時、沒有收到完整的第一個 byte；
+不像是 LLM、SQLite 或 Windows USB 連線錯誤。
+
+**關鍵更正：使用者在這份紀錄後明確聲明實際腳位為
+`const int TIP = 3;`、`const int RING = 6;`。**
+上一輪工程與文件誤以為 TIP=2、RING=6，本分支現已改為
+TIP=3、RING=6，加入 native C++ `static_assert` 防止將來倒退。
+但仍須分辨：產生上述 E5 的**當時實際燒錄的 Uno 韌體**是否已
+同時採用這兩個腳位。如果已經使用正確的 3/6，則 E5 仍是真實握手
+失敗，需要進一步量測；不能直接宣告修改腳位已經解決故障。
+換上正確韌體之前先移除 TI 2.5mm 插頭，刷完再接回。
