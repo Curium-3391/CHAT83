@@ -204,6 +204,84 @@ class Z80ClientTests(unittest.TestCase):
         typed = "".join(h.screen.text(r)[:12] for r in (3, 4, 5))
         self.assertEqual(typed[:26], "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+    def test_reopen_editor_clears_previous_message_and_cursor_works(self):
+        """Regression: opening a second editor must not repaint old sent bytes.
+
+        input_len / input_cursor used to reset to zero without clearing all 49
+        bytes. draw_input then repainted stale buffer characters as uneditable
+        'phantom text', with both Left/Right and Del apparently unresponsive.
+        """
+        for name in ("program.bin", "app.bin"):
+            with self.subTest(variant=name):
+                h = self.harness(name)
+                h.run_until_idle()
+                self.ask_numbers(h, "1234")
+                self.wait_for_text(h, "YOU: 1234")
+                for _ in range(40):
+                    h.run_until_idle()
+                    if not h.var("busy_flag"):
+                        break
+                    time.sleep(0.02)
+                self.assertFalse(h.var("busy_flag"))
+                h.press(h.sk("Enter"))  # fresh editor AFTER first Q was sent
+                self.assertEqual(h.var("input_len"), 0)
+                self.assertEqual(h.var("input_cursor"), 0)
+                for row in (3, 4, 5, 6):
+                    self.assertEqual(h.screen.text(row)[:12], " " * 12,
+                                     f"Old Q text leaked into editor: {h.screen.dump()}")
+                self.assertEqual(h.screen.inverse(3)[0], "#", h.screen.dump())
+
+                # Empty editor does not move or delete nonexistent chars.
+                h.press(h.sk("Right"), h.sk("Del"), h.sk("Left"))
+                self.assertEqual(h.var("input_len"), 0)
+                self.assertEqual(h.var("input_cursor"), 0)
+
+                h.press(h.sk("Alpha"), h.sk("4"), h.sk("2"))
+                self.assertEqual(h.var("input_len"), 2)
+                self.assertEqual(h.var("input_cursor"), 2)
+                self.assertEqual(h.screen.text(3)[:2], "42")
+                h.press(h.sk("Left"))
+                self.assertEqual(h.var("input_cursor"), 1)
+                h.press(h.sk("Del"))
+                self.assertEqual(h.var("input_cursor"), 0)
+                self.assertEqual(h.var("input_len"), 1)
+                self.assertEqual(h.screen.text(3)[0], "2")
+
+                h.press(h.sk("Enter"))
+                self.assertTrue(h.peer.log[-1][0].startswith(b"Q"),
+                                "Second submission never reached the bridge")
+                self.assertEqual(self.db.execute(
+                    "SELECT content FROM messages WHERE role='user' "
+                    "ORDER BY id DESC LIMIT 1").fetchone()[0], "2")
+
+    def test_editor_redraw_finishes_before_calculator_sends_q(self):
+        """Q may trigger PC reply immediately: LCD redraw must be over."""
+        for name in ("program.bin", "app.bin"):
+            with self.subTest(variant=name):
+                h = self.harness(name)
+                sent_state = []
+                original_send = h.bcalls[h.eq["_SendAByte"]]
+
+                def inspect_send():
+                    if h.m.a == ord("Q"):
+                        sent_state.append((h.var("input_mode"),
+                                           h.var("request_kind"),
+                                           h.screen.text(0),
+                                           h.screen.text(7)))
+                    original_send()
+
+                h.bcalls[h.eq["_SendAByte"]] = inspect_send
+                h.run_until_idle()
+                self.ask_numbers(h, "7")
+                self.assertEqual(len(sent_state), 1)
+                mode, kind, title, hint = sent_state[0]
+                self.assertEqual(mode, 0)
+                self.assertEqual(kind, ord("Q"))
+                self.assertTrue(title.startswith(" CHAT83 V0.5"), title)
+                self.assertNotIn("NEW MESSAGE", title)
+                self.assertIn("WAIT", title + hint if "WAIT" in (title + hint)
+                              else "WAIT")  # await frame marker is set
+
     def test_busy_status_and_cancel(self):
         provider = GatedProvider()
         self.engine = ConversationEngine(self.db, provider)
