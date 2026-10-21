@@ -12,7 +12,7 @@ Original TI-83 Plus
   4×12B editor, 16-row predictive trigger, polling for live LLM rows
        | TIP / RING / GND (2.5mm link)
 Arduino Uno ATmega328P
-  D2 = TIP, D3 = RING, GND = sleeve
+  D2 = TIP, D6 = RING, GND = sleeve
   Open-drain bit handshake; cooperative FSM; <=16-byte USB TX credit
        | USB COM2, 115200 baud, COBS+CRC8 frames
 Windows PC
@@ -31,6 +31,11 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
 或 TI-84 系列運行讀 Port 05h 的程式，該 I/O port 定義不同。
 
 ## 第一次安裝：先傳 TI 程式，最後才刷 Uno v0.5
+
+**已確認接線：使用者的 Uno 是 D2=TIP、D6=RING、GND=sleeve。
+新版 v0.5 原始碼已採用 D6。上游 `serial2ti83` 預設 D3=RING，
+用同一條 D6 接線傳送 TiLP 檔案時也必須把上游 sketch 的 RING 改成 6，
+或實際改線；切勿只更新一邊。**
 
 **⚠️ 安裝順序極其重要：同一塊 Uno 使用兩種互不相容的韌體。**
 原版 `serial2ti83.ino` 是之前用來連接 TiLP 的 9600-baud 橋接器；
@@ -53,7 +58,7 @@ v0.4，請重新刷回原版 `serial2ti83.ino`。TI 端的 `C83V5` 與
    `CHAT83_Uno_v05.ino`，板子選 Arduino Uno，重新上傳新的 v0.5
    韌體。上傳完成後關閉 Arduino IDE 的 Serial Monitor，重新接上
    計算機原本的 Link 接線。
-5. 確認接線：**Uno D2 → TIP、D3 → RING、GND → sleeve**。
+5. 確認接線：**Uno D2 → TIP、D6 → RING、GND → sleeve**。
    Arduino 只會把線路拉 LOW 或放開成 INPUT_PULLUP，
    不會主動強推 HIGH；禁止在未知硬體線路外加電壓。
 6. 在解壓縮套件的 PowerShell 工作目錄執行：
@@ -203,7 +208,7 @@ C++ 原韌體模擬回歸測試；**尚未有實機驗證它確實解決問題**
 1. 在 PowerShell 按 Ctrl+C，關閉 Arduino Serial Monitor。
 2. 拔下計算機的 Link 插頭，將套件中更新後的
    `CHAT83_Uno_v05.ino` 使用 Arduino IDE 重新上傳，之後把 Link
-   插頭接回原 D2/TIP、D3/RING、GND 接線。
+   插頭接回原 D2/TIP、D6/RING、GND 接線。
 3. 使用**新版** `bridge_v05.py` 搭配 `usb_v05.py`，用原本
    COM2 啟動：
 
@@ -291,3 +296,22 @@ GitHub Actions 同時執行：
 這些可自動化項目**不能替代實體 Uno 的 bit-level 時序測試**。Z80 模擬
 測試沒有真正的 TI ROM：`_PutMap` 的字形、`LCD_BUSY_QUICK` 的延遲、
 中斷、APD 和連線電氣時序都不在測試範圍內。
+
+
+### 2026-10-21 補充：確認 Uno E5 逾時與診斷修復
+
+使用者已更正實際接線：**D2=TIP、D6=RING**，不是上游標準 D3。
+先前刷的 Uno／Python 可正常 `handshake OK`，但在計算機 Link
+嘗試後，Python 最後報 `Arduino error code 5`（Uno 的
+`RX_WAIT_RELEASE` 等待 TI 釋放其起始位元的線路超過 30ms）。
+錯誤前的多行 `start=0 ack=0` 是逾時以前的取樣，
+不代表逾時瞬間沒有接到電氣訊號；該錯誤本身證明 Uno 進過 RX 等待狀態。
+原版 Python 一收到 E5 就退出，導致無法取得接下來的 J 診斷封包。
+
+**新版診斷：** 使用 `--debug-link` 時，USB 層只將 `E5`
+視為應記錄的 RX 逾時並繼續讀取 `J`，使用者可於計算機報錯後
+保留 Python 約兩秒、取得 `start/ack/rx_to/TIP/RING`，
+最後按 Ctrl+C。**其他錯誤仍會中止，平常未開 debug 仍對 E5 fail-fast。**
+新的 ZIP 中 Uno 韌體與原始碼預設 D6；如果實際 Uno 已自行修改並
+重新上傳使用 D6，僅需替換新版 `usb_v05.py` 即可先做診斷，
+不必重燒、也不必重傳計算機 App。實際握手仍未通過驗收。
