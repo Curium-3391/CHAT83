@@ -6,7 +6,7 @@ import time
 import unittest
 
 from bridge_v03 import db_connect, save_message
-from bridge_v05 import ConversationEngine, StableRows, serve
+from bridge_v05 import ConversationEngine, StableRows, WordRows, serve
 from protocol_v05 import (
     BUSY, NEWER, RESET, Chunk, RangeRequest,
     encode_chunk, decode_chunk, encode_fetch, decode_fetch,
@@ -165,6 +165,54 @@ class StreamingTests(unittest.TestCase):
         fmt = StableRows()
         self.assertEqual(fmt.feed("CAFÉ\nX"), ["PC: CAFE".ljust(12)])
         self.assertEqual(fmt.finish(), ["X".ljust(12)])
+
+
+class WordWrapTests(unittest.TestCase):
+    def test_streaming_chunks_preserve_words_and_committed_rows(self):
+        wrapped = WordRows()
+        self.assertEqual(wrapped.feed("HEL"), [])
+        self.assertEqual(wrapped.feed("LO WOR"), [])
+        self.assertEqual(wrapped.feed("LD GOOD"), ["PC: HELLO".ljust(12), "WORLD".ljust(12)])
+        self.assertEqual(wrapped.feed("BYE"), [])
+        self.assertEqual(wrapped.finish(), ["GOODBYE".ljust(12)])
+        self.assertEqual(wrapped.finish(), [])
+
+    def test_full_width_ascii_word_no_overflow(self):
+        wrapped = WordRows()
+        rows = wrapped.feed("ABCDEFGHIJKLMNO")
+        rows += wrapped.finish()
+        self.assertEqual(rows, ["PC: ".ljust(12), "ABCDEFGHIJKL", "MNO".ljust(12)])
+        self.assertTrue(all(len(row) == 12 for row in rows))
+
+    def test_unicode_newlines_and_original_default_unchanged(self):
+        wrapped = WordRows()
+        self.assertEqual(wrapped.feed("CAFÉ\nX"), ["PC: CAFE".ljust(12)])
+        self.assertEqual(wrapped.finish(), ["X".ljust(12)])
+        unwrapped = StableRows()
+        self.assertEqual(unwrapped.feed("HELLO WORLD"), ["PC: HELLO WO"])
+        self.assertEqual(unwrapped.finish(), ["RLD".ljust(12)])
+
+    def test_engine_saves_wrapped_rows_without_mutating_history(self):
+        from providers_v05 import DemoProvider
+        from bridge_v03 import db_connect
+        import time
+        db = db_connect(":memory:")
+        try:
+            engine = ConversationEngine(db, DemoProvider(), word_wrap=True)
+            engine.ask("HELLO", True)
+            deadline = time.monotonic() + 2
+            while engine.generating and time.monotonic() < deadline:
+                engine.drain()
+                time.sleep(0.002)
+            engine.drain()
+            self.assertFalse(engine.generating)
+            self.assertEqual(engine.word_wrap, True)
+            rows = [x[0] for x in db.execute("SELECT text FROM display_lines ORDER BY id")]
+            self.assertTrue(rows)
+            self.assertTrue(all(len(row) == 12 for row in rows))
+            self.assertIn("PC: WORLD", "".join(rows))
+        finally:
+            db.close()
 
 
 class EngineTests(unittest.TestCase):
