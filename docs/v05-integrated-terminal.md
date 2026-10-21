@@ -504,3 +504,22 @@ Uno TX timeout。注意：這是**實機時序假說**，仍須在真機驗證�
 CI 的 App/Program Z80 emulator 已驗證完整清空、
 重開後按鍵、第二次發送與在第一個 Q byte 前完成重畫，
 但物理 UART/Link 的時序測試仍由真機補足。
+
+#### Gemini 長篇閱讀實驗（獨立於 Link 時序）
+
+Python Bridge 新增可選的 `--word-wrap`（預設關閉），在
+12 字元寬度下**盡量不拆開英文單字**，並正確跨越 Gemini
+streaming token 分界來暫存未完成的詞。超過單行的長詞仍可分行。
+已提交到 SQLite 的行保持不可變，避免拉取舊歷史時文字位移。
+原有 `StableRows` 不變，沒啟用 `--word-wrap` 的顯示結果
+與之前完全相同。
+
+此功能只需替換套件內的 `bridge_v05.py`，
+**不需要再刷 Uno 或另裝 App**（但上面的輸入殘影修正
+必須更新 App）。請在 250ms 穩定驗證後才另測：
+
+```powershell
+py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --word-wrap
+```
+
+測試完成再考慮降低回覆延遲，避免把分行 Bug 和位元握手時序混為一談。
