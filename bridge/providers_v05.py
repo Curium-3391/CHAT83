@@ -2,6 +2,7 @@
 
 - demo: offline, deterministic, no secrets needed.
 - openai: Responses API via official optional openai SDK.
+- gemini: official google-genai SDK, streaming text and conversation history.
 - ollama: optional local HTTP streaming, no cloud credentials.
 All generation runs on a worker; USB serial traffic stays on the main thread.
 """
@@ -56,6 +57,65 @@ class OpenAIProvider:
                 raise RuntimeError("LLM generation failed")
 
 
+class GeminiProvider:
+    """Google Gemini API with streaming replies and the existing SQLite history.
+
+    The Gemini SDK is imported lazily; demo/other providers don't require it.
+    The API key lives ONLY in the Windows process environment, not in .ino,
+    the calculator, SQLite, or GitHub.
+    """
+
+    name = "gemini"
+
+    def __init__(self, model: str = "gemini-3.5-flash-lite"):
+        self.model = model
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError(
+                "Set GEMINI_API_KEY on your Windows PC (not in the calculator, "
+                "Arduino firmware, GitHub, or chat logs)"
+            )
+
+    def stream(self, messages: list[dict[str, str]]) -> Iterable[str]:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install the optional Gemini SDK: py -m pip install google-genai"
+            ) from exc
+
+        # Gemini uses 'model' for previous assistant responses (not 'assistant').
+        # Explicit Content entries preserve the existing multi-turn context.
+        contents = [
+            types.Content(
+                role="user" if m["role"] == "user" else "model",
+                parts=[types.Part.from_text(text=m["content"])],
+            )
+            for m in messages
+            if m["role"] in ("user", "assistant") and m.get("content")
+        ]
+        if not contents or contents[-1].role != "user":
+            raise ValueError("Gemini requires the latest nonempty user message")
+
+        # Pass the exact GEMINI_API_KEY deliberately (the SDK also supports
+        # GOOGLE_API_KEY, but silently using a different project is surprising).
+        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        try:
+            for chunk in client.models.generate_content_stream(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=DEFAULT_SYSTEM,
+                    max_output_tokens=768,
+                    temperature=0.5,
+                ),
+            ):
+                if chunk.text:
+                    yield chunk.text
+        finally:
+            client.close()
+
+
 class OllamaProvider:
     name = "ollama"
 
@@ -90,6 +150,8 @@ def provider_factory(name: str, model: str, ollama_url: str = "http://127.0.0.1:
         return DemoProvider()
     if name == "openai":
         return OpenAIProvider(model)
+    if name == "gemini":
+        return GeminiProvider(model)
     if name == "ollama":
         return OllamaProvider(model, ollama_url)
-    raise ValueError(f"unknown provider {name!r}; choose demo/openai/ollama")
+    raise ValueError(f"unknown provider {name!r}; choose demo/gemini/openai/ollama")

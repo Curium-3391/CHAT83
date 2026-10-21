@@ -23,6 +23,10 @@ jobs:
           python-version: "3.11"
       - name: Check syntax
         run: python -m compileall -q bridge tests
+      - name: Smoke-test optional Gemini SDK compatibility (no API calls)
+        run: |
+          python -m pip install -r bridge/requirements-v05-gemini.txt
+          python -c "from google import genai; from google.genai import types; assert types.Part.from_text(text='HELLO').text == 'HELLO'; assert types.Content(role='user', parts=[types.Part.from_text(text='HI')]).role == 'user'; assert hasattr(genai.Client, 'close')"
       - name: Full regression plus v0.5 transport and LLM tests
         run: PYTHONPATH=bridge python -m unittest discover -s tests -v
   link-handshake-mock:
@@ -139,7 +143,9 @@ jobs:
             bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
           cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
           cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          cp docs/v06-gemini-provider.md build/CHAT83-v05-Windows/GEMINI-SETUP.md
           cp docs/v05-wire-protocol.md build/CHAT83-v05-Windows/WIRE-PROTOCOL.md
+          test -s build/CHAT83-v05-Windows/requirements-v05-gemini.txt
           test -s build/CHAT83-v05-Windows/C83V5.8xp
           test -s build/CHAT83-v05-Windows/CHAT83.8xk
           test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"

@@ -319,7 +319,7 @@ def main():
     ap = argparse.ArgumentParser(description="CHAT83 v0.5 LLM terminal bridge")
     ap.add_argument("--port", default="COM2")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
-    ap.add_argument("--provider", choices=("demo", "openai", "ollama"), default="demo")
+    ap.add_argument("--provider", choices=("demo", "gemini", "openai", "ollama"), default="demo")
     ap.add_argument("--model", default="")
     ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     ap.add_argument("--gap-ms", type=int, default=35,
@@ -338,8 +338,8 @@ def main():
         ap.error("--gap-ms must be 2..50")
     if not 0 <= args.reply_delay_ms <= 1500:
         ap.error("--reply-delay-ms must be 0..1500")
-    model = args.model or {"demo": "offline", "openai": "gpt-4.1-mini",
-                           "ollama": "llama3.2"}[args.provider]
+    model = args.model or {"demo": "offline", "gemini": "gemini-3.5-flash-lite",
+                           "openai": "gpt-4.1-mini", "ollama": "llama3.2"}[args.provider]
     provider = provider_factory(args.provider, model, args.ollama_url)
     import serial
     args.db.parent.mkdir(parents=True, exist_ok=True)
