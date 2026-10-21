@@ -438,3 +438,69 @@ USB、Uno 以及實體 Link 傳送層在這一次測試**沒有回報錯誤**。
 高負載長串流、連續問答多次與實際雲端 LLM provider。
 這些可在後續獨立 PR 改進，不影響將已通過的
 **v0.5 demo 端到端驗收里程碑**納入 main。
+
+
+### 2026-10-21 第三次實機待測：重開編輯器殘影與縮短 turnaround
+
+**使用者回報（Gemini API 已在真機上運作）：** 送出訊息後再次按
+ENTER 進入「NEW MESSAGE」，畫面上還能看到先前送出的文字，
+卻不能按 DEL 刪掉，也無法用 LEFT/RIGHT 移動游標。
+
+**已從原始碼找到可重現的成因：** `input_screen` 重設
+`input_len=0`、`input_cursor=0`，卻只清掉 `input_buf` 的
+**第一個 byte**；`draw_input` 直接畫滿 48 個字元格，
+使以前內容殘留，且因為長度與游標已為 0，DEL／RIGHT 都視為
+空輸入而不動。修正版在進入編輯器時用 `zero_fill`
+將 **49-byte buffer（48 字 + NUL）完整清零**。
+
+**同時將 Q 傳送和畫面重繪重新排序：**
+先離開輸入模式、關閉 RX assist、把 `request_kind` 設成 Q、
+**先畫好「等待回覆」的 HISTORY 畫面**，再呼叫
+`send_bytes` 送出 Q；最後 reset RX 並 enable RX，
+其後不再呼叫完整 `draw_history`。這個修改是為了避免
+PC→TI 回覆已開始，而 Z80 卻被 LCD 重繪阻塞，造成
+Uno TX timeout。注意：這是**實機時序假說**，仍須在真機驗證。
+
+#### 安裝與安全回退
+
+- 本分支只修改 `calculator/CHAT83_v05_chat.asm`，
+  及加入針對 App + ASM program 的 Z80 模擬回歸測試。
+  **Uno 使用 TIP=D3、RING=D6，不修改韌體或接線。**
+- 測試包中新的 `CHAT83.8xk`（或 `C83V5.8xp`）
+  必須**重新傳到 TI-83 Plus**，替換原版 Z80 程式。
+  **只替換 Python 並無法修復 83 端的輸入編輯器。**
+- 若用同一塊 Uno + TiLP 傳檔，必須先刷回
+  `serial2ti83` 並將它的腳位常數也改成
+  `TIP=3; RING=6;`，完成傳輸後再刷回 CHAT83 v0.5
+  韌體（TIP=D3、RING=D6；115200 baud）。
+  重新刷韌體之前先拔下 TI 的 2.5mm 插頭。
+- 正式穩定版仍在 `main`；本次修改在
+  `fix/ti83-editor-reset-and-turnaround` **Draft PR**，
+  若不順利可以傳回原版 `CHAT83.8xk` 恢復舊版。
+
+#### 分兩階段測試
+
+1. **先維持已證實的設定：**
+
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --debug-link
+   ```
+
+   在計算機提問 `HELLO`，等回覆完成；再按 ENTER。
+   此時 NEW MESSAGE 內容應當是空白（只有空的反白游標），
+   DEL／RIGHT 不會移動是正常的，因為長度等於 0。
+   輸入 `HELLO`、按 LEFT、DEL，必須看到文字與游標確實更新，
+   並能送出第二次問題。再測 Gemini UPDATE 長答及捲動。
+
+2. **僅在第一階段成功後**，保持 Uno、App 不變，
+   比較 `--reply-delay-ms 100`、`50`、`0`。
+   每次都重新啟動 Bridge、在 TI 問至少兩次短問題，
+   確認 LCD 內容與 `[UNO-DIAG] tx_to=0, rx_to=0`。
+   若出現任何 `Uno TI TX failed`、亂碼或卡住，
+   立即退回 250ms；**模擬器無法證明 0ms 實機安全**。
+   運作穩定時，再單獨量測 `--gap-ms` 的縮減，
+   不要在同一輪同時調整兩個參數。
+
+CI 的 App/Program Z80 emulator 已驗證完整清空、
+重開後按鍵、第二次發送與在第一個 Q byte 前完成重畫，
+但物理 UART/Link 的時序測試仍由真機補足。
