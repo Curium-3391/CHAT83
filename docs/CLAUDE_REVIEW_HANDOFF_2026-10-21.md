@@ -134,3 +134,15 @@ Run `bridge_v05.py --debug-link`, **leave it running**, execute `Asm(prgmC83V5)`
 ---
 
 This review handoff documents code committed in GitHub and first-party reported device logs. It intentionally **does not contain API keys, credentials, or private user identifiers**.
+
+
+## Update 2026-10-21: GPIO D6 discovery and hard E5 evidence
+
+- User confirmed their physical Uno **RING is D6**, not the earlier D3 assumption. The v0.5 Uno source in this branch has been updated to use **D6**; upstream serial2ti83 defaults to D3 and must be adjusted when that cable is reused for TiLP.
+- Their latest run after making local D6 modifications reached `CHAT83 Uno v0.5 handshake OK` and then, following prolonged idle `J` snapshots of `start=0 ack=0`, Python terminated with:
+  ```text
+  Uno link statistics: {'tx': 0, 'rx': 0, 'errors': 1, 'gap_ms': 35}
+  LINK ERROR: Arduino error code 5
+  ```
+- Firmware E5 is emitted inside `RX_WAIT_RELEASE` only when the incoming TI-driven bit line remains LOW for at least 30ms after Uno begins ACK. This proves Uno entered RX state, but because Python previously immediately exited, **no post-event counters** were captured. Do not mistake earlier idle zeros for evidence of no bit start.
+- `bridge/usb_v05.py` now, **only with `--debug-link`**, reports E5 as a rate-limited warning and continues polling the 500ms `J` telemetry instead of tearing down COM2. Normal mode still raises E5. Next action: update **only usb_v05.py**, keep the user's locally configured D6 Uno in place, run debug bridge, trigger calculator, wait two seconds, collect snapshots, Ctrl+C. Exact E5 cause (missing ACK? source held LOW? transient pin race?) not yet known; do not merge Draft PR #7.
