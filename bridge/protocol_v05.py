@@ -13,7 +13,8 @@ Reply:
 FLAGS: 0x01 older, 0x02 newer, 0x04 reset, 0x08 generating,
        0x10 model error. Only RESET may contain no data in v0.4; v0.5
        also allows zero-row poll/fetch responses.
-Sequence zero for S/Q/U; request seq for F; one outstanding F at a time.
+Sequence zero for S/Q/U/K; request seq for F; one outstanding F at a time.
+R makes the PC resend the previous reply bytes unchanged.
 """
 from __future__ import annotations
 

@@ -1,7 +1,9 @@
-"""Pure Python model for CHAT83 v0.5 predictive 48-row ring buffer for v0.5.
+"""Pure Python model of the CHAT83 v0.5 predictive 48-row ring buffer.
 
-Not the physical Z80 implementation yet: this deterministic model is used to
-prove cache / cursor / viewport invariants before touching TI-83 Plus RAM.
+Copied from prefetch_v04.py with PREFETCH_THRESHOLD raised from 8 to 16.
+Not the Z80 implementation: tests/test_v05_stress.py uses Cache to check
+cache / cursor / viewport invariants. The frame codec at the bottom is the
+legacy v0.4 XOR format; the v0.5 bridge uses protocol_v05.py (CRC8) instead.
 """
 from __future__ import annotations
 
@@ -158,7 +160,8 @@ class Cache:
         self.check()
 
 
-# Proposed v0.4 chunk frame codec; Python-side only, no Z80 integration yet.
+# Legacy v0.4 XOR frame codec, kept for parity with prefetch_v04.py.
+# Not used by bridge_v05.py; see protocol_v05.py for the v0.5 CRC8 frames.
 # Each frame is small enough to stage in six 13-byte Z80 row slots.
 # All integer offsets are little-endian unsigned 32-bit global line indices.
 import struct

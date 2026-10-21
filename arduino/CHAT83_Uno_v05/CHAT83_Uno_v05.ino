@@ -6,9 +6,11 @@
  * Decoded packet format: [type, fields..., CRC8(poly 0x07)].
  *   P                      -> H,major,minor,capabilities
  *   G,gap_ms (2..50)       -> A,0,0
+ *   D,on (0/1)             -> A,0,0; toggles periodic J diagnostics
  *   T,seq,n,byte[0..15]    -> A,seq,status (after all link bytes handshake)
  *   R,byte                 <-  calculator TX byte
  *   E,error_code           <-  link or parser error
+ *   J,counters...          <-  link diagnostics every 500 ms while D is on
  *
  * A status 0 = fully sent; 1 = link timeout; 2 = busy; 3 = malformed.
  * Credit/window: max 16 bytes per T batch; PC MUST wait for its A before
