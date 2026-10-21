@@ -2,16 +2,16 @@
 
 **A retro serial terminal for the TI-83 Plus, on the road to LLM connectivity.**
 
-> **Current status:** v0.2 and v0.3.2 work on real hardware, and the v0.4 cooperative RX has also been demonstrated on real hardware. The v0.5 build adds the LLM integration but is **not yet working on hardware**: the calculator reports `ERR:LINK` with the new Uno firmware. This is experimental Z80 software.
+> **Current status (2026-10-21):** v0.5 has its first **confirmed end-to-end real-hardware demo** on an original TI-83 Plus: calculator `HELLO` → Python demo provider → calculator screen `PC: WORLD`. The working setup is Uno **TIP=D3 / RING=D6**, USB **COM2 at 115200 baud**, `--gap-ms 35 --reply-delay-ms 250`. Prior v0.2/v0.3.2 and v0.4 versions were also hardware-tested. This confirms a demo round trip, **not** long-term reliability, streaming performance, or a live LLM API integration.
 
-CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno running [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83). The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
+CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno. v0.2–v0.4 used upstream [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83); **v0.5 uses a separate custom Uno firmware** with COBS/CRC8 at 115200 baud, and is not TiLP-compatible. The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
 
 ```text
 TI-83 Plus (Z80) <-- 2.5 mm link --> Arduino Uno
-     <-- USB / serial, 9600 baud --> Windows Python bridge
+     <-- USB / serial, 115200 baud --> Windows Python bridge (v0.5)
                                       |
-                                      +--> local test replies (now)
-                                      +--> LLM API (future)
+                                      +--> offline demo replies (hardware-tested)
+                                      +--> OpenAI / Ollama options (not hardware-verified)
 ```
 
 ## Features (v0.2, tested)
@@ -133,3 +133,14 @@ Both run on the **original TI-83 Plus only**; port 05h means something different
 - This repository's original code and docs: [MIT License](LICENSE). No upstream Arduino source is copied into this repo.
 
 See the [development log](docs/development-log.md) for the distinction between confirmed results and planned features.
+
+
+## Hardware milestone: v0.5 demo accepted (2026-10-21)
+
+On the user's original TI-83 Plus and Arduino Uno with physical pins `TIP=3` / `RING=6`, Python `bridge_v05.py --port COM2 --provider demo --gap-ms 35 --debug-link --reply-delay-ms 250` completed:
+
+- Calculator → Uno → Windows: one SYNC byte and a valid 9-byte `Q 'HELLO'` request, total `rx=10`, exactly 80 bit starts / 80 bit ACKs, `rx_to=0`.
+- Windows → Uno → calculator: `SYNC` 45-byte 3-row response and `Q 'HELLO'` 33-byte 2-row response, total `tx=78`, zero reported errors.
+- **User explicitly confirmed `PC: WORLD` appears on the calculator's actual LCD** and authorized merging v0.5 into `main`.
+
+The 250 ms host response delay is still required in the demonstrated configuration; a previous run without turnaround delay experienced Uno TI TX timeout. Full stability, shorter delay, multi-turn UX, lengthy streams and API providers have not yet been physically verified. Preserve the `--reply-delay-ms 250` recommendation for this hardware until the timing root cause is fixed.
