@@ -96,6 +96,8 @@ class UnoUsb:
         self.tx_count = 0
         self.rx_count = 0
         self.link_errors = 0
+        self.debug_link = False
+        self.rx_timeout_events = 0
 
     def _send(self, message: bytes):
         self.ser.write(make_frame(message))
@@ -135,7 +137,19 @@ class UnoUsb:
             self.rx_count += 1
         elif k == b"E" and len(packet) == 2:
             self.link_errors += 1
-            raise LinkFailure(f"Arduino error code {packet[1]}")
+            code = packet[1]
+            if self.debug_link and code == 5:
+                # The AVR sends E5 before its next 500ms J telemetry.  In
+                # diagnostic mode do not abandon COM2 and lose the only
+                # post-failure snapshot. E5 is a TI->Uno bit ACK timeout.
+                # Rate-limit repeated warnings if one wire remains LOW.
+                self.rx_timeout_events += 1
+                if self.rx_timeout_events <= 3 or self.rx_timeout_events % 16 == 0:
+                    print("[UNO-LINK] E5 RX handshake timeout #{} "
+                          "(continuing to collect J counters; Ctrl+C to stop)"
+                          .format(self.rx_timeout_events), flush=True)
+            else:
+                raise LinkFailure(f"Arduino error code {code}")
         elif k == b"J" and len(packet) == 14:
             def u16(offset):
                 return packet[offset] | (packet[offset + 1] << 8)
@@ -187,6 +201,7 @@ class UnoUsb:
         ack = self._wait_for(b"A", seq=0)
         if len(ack) != 3 or ack[2] != 0:
             raise LinkFailure(f"Uno rejected diagnostic mode: {ack!r}")
+        self.debug_link = True
         print("[UNO-DIAG] enabled: counts are bit attempts/acks/bytes/errors",
               flush=True)
 
@@ -217,4 +232,4 @@ class UnoUsb:
 
     def stats(self):
         return dict(tx=self.tx_count, rx=self.rx_count, errors=self.link_errors,
-                    gap_ms=self.gap_ms)
+                    gap_ms=self.gap_ms, rx_timeout_events=self.rx_timeout_events)
