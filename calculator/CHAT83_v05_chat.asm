@@ -2,8 +2,16 @@
 #include "ti83plus.inc"
 .list
 
+; Build targets (see .github/workflows/verify-v05.yml):
+;   default            C83V5.8xp program, run with Asm(prgmC83V5)
+;   -DCHAT83_APP       CHAT83.8xk signed Flash App, run from the APPS menu
+#ifdef CHAT83_APP
+#include "app.inc"
+    defpage(0, "CHAT83")
+#else
 .org userMem - 2
 .db t2ByteTok, tAsmCmp
+#endif
 
 ; CHAT83 v0.5 EXPERIMENTAL -- original TI-83 Plus only
 ; Nonblocking port-0 RX assist, cooperative _GetCSC, predictive row prefetch.
@@ -23,38 +31,14 @@ MAX_INPUT EQU 48
 start:
     xor a
     out (00h),a
-    ld (rx_pos),a
-    ld (crc_state),a
-    ld (rx_expected),a
-    ld (request_kind),a
-    ld (cache_head),a
-    ld (cache_count),a
-    ld (cursor_off),a
-    ld (view_off),a
-    ld (page_flags),a
-    ld (last_key),a
-    ld (pending_enter),a
-    ld (pending_cancel),a
-    ld (error_flag),a
-    ld (exit_flag),a
-    ld (sequence),a
-    ld (cache_start),a
-    ld (cache_start+1),a
-    ld (cache_start+2),a
-    ld (cache_start+3),a
-    ld (evicted_flag),a
-    ld (busy_flag),a
-    ld (model_error),a
-    ld (input_mode),a
-    ld (input_cursor),a
-    ld (poll_timer),a
-    ld (poll_timer+1),a
-    ld (retry_count),a
-    ld (idle_ticks),a
-    ld (idle_ticks+1),a
-    ld (repeat_ticks),a
-    ld (repeat_ticks+1),a
-    ld (direction),a           ; prefetch only after a real scroll
+    ; RAM state lives outside the program image (an App runs from read-only
+    ; Flash), so every variable and the row cache start from zero here.
+    ld hl,ram_vars
+    ld bc,RAM_VARS_SIZE
+    call zero_fill
+    ld hl,history_cache
+    ld bc,CACHE_ROWS*13
+    call zero_fill
     call draw_loading
     ld a,'S'
     ld (request_kind),a
@@ -102,6 +86,21 @@ loop_live:
 exit_program:
     xor a
     out (00h),a
+    set graphDraw,(iy+graphFlags)  ; history_cache overwrote plotSScreen
+#ifdef CHAT83_APP
+    bjump(_JForceCmdNoChar)
+#else
+    ret
+#endif
+
+; HL = start, BC = length (>= 2). Clears BC bytes.
+zero_fill:
+    ld (hl),0
+    ld d,h
+    ld e,l
+    inc de
+    dec bc
+    ldir
     ret
 
 enable_rx:
@@ -993,7 +992,7 @@ draw_load_status:
     ld a,9
     ld (curCol),a
     ld hl,load_label
-    bcall(_PutS)
+    call put_str
     ret
 
 ; Dirty cursor updates: only repaint two '>' positions when viewport stays
@@ -1294,11 +1293,11 @@ input_screen:
     bcall(_ClrLCDFull)
     bcall(_HomeUp)
     ld hl,ask_title
-    bcall(_PutS)
+    call put_str
     ld a,2
     call set_row
     ld hl,ask_label
-    bcall(_PutS)
+    call put_str
     call draw_input
     ret
 
@@ -1529,7 +1528,7 @@ input_copy_printable:
     ld a,(editor_row)
     call set_row
     ld hl,input_line
-    bcall(_PutS)
+    call put_str
     ld a,(editor_offset)
     add a,12
     ld (editor_offset),a
@@ -1565,11 +1564,11 @@ input_cursor_position:
     or a
     jr z,input_show_numbers
     ld hl,alpha_label
-    bcall(_PutS)
+    call put_str
     ret
 input_show_numbers:
     ld hl,number_label
-    bcall(_PutS)
+    call put_str
     ret
 
 ; Physical TI-83+ ALPHA legend positions via GetCSC scan codes.
@@ -1588,6 +1587,19 @@ numeric_pairs:
     .db skComma,','
 
 ; ---- text UI ----------------------------------------------------------
+; _PutS replacement. A bcall maps the OS ROM page over 4000h-7FFFh, so an
+; App's own strings are unreadable from inside _PutS; print per character.
+; HL = NUL-terminated string; returns HL past the terminator.
+put_str:
+    ld a,(hl)
+    inc hl
+    or a
+    ret z
+    push hl
+    bcall(_PutC)
+    pop hl
+    jr put_str
+
 set_row:
     ld (curRow),a
     xor a
@@ -1598,32 +1610,32 @@ draw_loading:
     bcall(_ClrLCDFull)
     bcall(_HomeUp)
     ld hl,title
-    bcall(_PutS)
+    call put_str
     ld a,3
     call set_row
     ld hl,loading
-    bcall(_PutS)
+    call put_str
     ret
 draw_error:
     bcall(_ClrLCDFull)
     bcall(_HomeUp)
     ld hl,error_text
-    bcall(_PutS)
+    call put_str
     ld a,2
     call set_row
     ld hl,exit_help
-    bcall(_PutS)
+    call put_str
     ret
 
 draw_history:
     bcall(_ClrLCDFull)
     bcall(_HomeUp)
     ld hl,title
-    bcall(_PutS)
+    call put_str
     ld a,7
     call set_row
     ld hl,history_help
-    bcall(_PutS)
+    call put_str
     ld a,(model_error)
     or a
     jr nz,show_model_error
@@ -1633,13 +1645,13 @@ draw_history:
     ld a,11
     ld (curCol),a
     ld hl,live_label
-    bcall(_PutS)
+    call put_str
     jr history_no_state
 show_model_error:
     ld a,11
     ld (curCol),a
     ld hl,err_label
-    bcall(_PutS)
+    call put_str
 history_no_state:
     ld a,(cache_count)
     or a
@@ -1647,7 +1659,7 @@ history_no_state:
     ld a,2
     call set_row
     ld hl,empty_text
-    bcall(_PutS)
+    call put_str
     ret
 draw_rows:
     ld a,(view_off)
@@ -1667,7 +1679,7 @@ draw_row_loop:
     call ring_addr
     ld a,(draw_row)
     call set_row
-    bcall(_PutS)
+    call put_str
     ld a,(draw_index)
     ld b,a
     ld a,(cursor_off)
@@ -1703,124 +1715,74 @@ alpha_label:    .db "ALPHA ON",0
 number_label:   .db "NUMBERS ",0
 blank13:        .db "             ",0
 
-; ---- RAM state; explicit storage for old calculators / SPASM-ng ------
-rx_pos:         .db 0
-crc_state:      .db 0
-rx_expected:    .db 0
-request_kind:   .db 0
-error_flag:     .db 0
-exit_flag:      .db 0
-last_key:       .db 0
-pending_enter:  .db 0
-pending_cancel: .db 0
-cache_head:     .db 0
-cache_count:    .db 0
-cache_start:    .db 0,0,0,0
-cursor_off:     .db 0
-view_off:       .db 0
-page_flags:     .db 0
-direction:      .db 0
-pending_dir:    .db 0
-fetch_count:    .db 0
-safe_space:     .db 0
-evicted_flag:   .db 0
-busy_flag:      .db 0
-model_error:    .db 0
-follow_tail:    .db 0
-poll_timer:     .dw 0
-retry_count:    .db 0
-input_mode:     .db 0
-input_cursor:   .db 0
-scan_key:       .db 0
-temp_char:      .db 0
-editor_row:     .db 0
-editor_offset:  .db 0
-input_line:     .db "            ",0
-alpha_mode:     .db 0
-retry_wire:     .db 0,0,0
-cancel_wire:    .db 0,0
-question_wire:
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-idle_ticks:     .dw 0
-repeat_ticks:   .dw 0
-pending_scroll: .db 0
-prior_cursor:   .db 0
-prior_view:     .db 0
-update_wire:    .db 0,0,0,0,0,0
-sequence:       .db 0
-expect_seq:     .db 0
-stage_index:    .db 0
-rows_to_copy:   .db 0
-draw_index:     .db 0
-draw_row:       .db 0
-input_len:      .db 0
-input_buf:      .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0
-send_ptr:       .dw 0
-send_left:      .db 0
-fetch_start:    .db 0,0,0,0
-calc_addr:      .db 0,0,0,0
-fetch_wire:     .db 0,0,0,0,0,0,0,0,0
-rx_frame:
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0
-    .db 0,0,0
-history_cache:
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 0
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 1
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 2
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 3
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 4
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 5
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 6
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 7
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 8
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 9
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 10
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 11
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 12
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 13
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 14
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 15
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 16
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 17
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 18
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 19
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 20
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 21
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 22
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 23
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 24
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 25
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 26
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 27
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 28
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 29
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 30
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 31
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 32
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 33
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 34
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 35
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 36
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 37
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 38
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 39
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 40
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 41
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 42
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 43
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 44
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 45
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 46
-    .db 0,0,0,0,0,0,0,0,0,0,0,0,0 ; 47
+; ---- RAM state -------------------------------------------------------
+; Not part of the program image: an App executes from read-only Flash.
+; history_cache (48 rows x 13 bytes) uses plotSScreen, the graph buffer;
+; exit_program marks the graph for redraw. Everything else uses
+; appBackUpScreen. Both are 768 bytes and zero-filled at start.
+; Do not call ROM graph routines (_ILine, _IPoint, _GrBufCpy ...): they
+; write plotSScreen.
+history_cache   EQU plotSScreen
+ram_vars        EQU appBackUpScreen
+rx_pos          EQU ram_vars+0   ; 1
+crc_state       EQU ram_vars+1   ; 1
+rx_expected     EQU ram_vars+2   ; 1
+request_kind    EQU ram_vars+3   ; 1
+error_flag      EQU ram_vars+4   ; 1
+exit_flag       EQU ram_vars+5   ; 1
+last_key        EQU ram_vars+6   ; 1
+pending_enter   EQU ram_vars+7   ; 1
+pending_cancel  EQU ram_vars+8   ; 1
+cache_head      EQU ram_vars+9   ; 1
+cache_count     EQU ram_vars+10  ; 1
+cache_start     EQU ram_vars+11  ; 4
+cursor_off      EQU ram_vars+15  ; 1
+view_off        EQU ram_vars+16  ; 1
+page_flags      EQU ram_vars+17  ; 1
+direction       EQU ram_vars+18  ; 1
+pending_dir     EQU ram_vars+19  ; 1
+fetch_count     EQU ram_vars+20  ; 1
+safe_space      EQU ram_vars+21  ; 1
+evicted_flag    EQU ram_vars+22  ; 1
+busy_flag       EQU ram_vars+23  ; 1
+model_error     EQU ram_vars+24  ; 1
+follow_tail     EQU ram_vars+25  ; 1
+poll_timer      EQU ram_vars+26  ; 2
+retry_count     EQU ram_vars+28  ; 1
+input_mode      EQU ram_vars+29  ; 1
+input_cursor    EQU ram_vars+30  ; 1
+scan_key        EQU ram_vars+31  ; 1
+temp_char       EQU ram_vars+32  ; 1
+editor_row      EQU ram_vars+33  ; 1
+editor_offset   EQU ram_vars+34  ; 1
+input_line      EQU ram_vars+35  ; 13
+alpha_mode      EQU ram_vars+48  ; 1
+retry_wire      EQU ram_vars+49  ; 3
+cancel_wire     EQU ram_vars+52  ; 2
+question_wire   EQU ram_vars+54  ; 52
+idle_ticks      EQU ram_vars+106 ; 2
+repeat_ticks    EQU ram_vars+108 ; 2
+pending_scroll  EQU ram_vars+110 ; 1
+prior_cursor    EQU ram_vars+111 ; 1
+prior_view      EQU ram_vars+112 ; 1
+update_wire     EQU ram_vars+113 ; 6
+sequence        EQU ram_vars+119 ; 1
+expect_seq      EQU ram_vars+120 ; 1
+stage_index     EQU ram_vars+121 ; 1
+rows_to_copy    EQU ram_vars+122 ; 1
+draw_index      EQU ram_vars+123 ; 1
+draw_row        EQU ram_vars+124 ; 1
+input_len       EQU ram_vars+125 ; 1
+input_buf       EQU ram_vars+126 ; 49
+send_ptr        EQU ram_vars+175 ; 2
+send_left       EQU ram_vars+177 ; 1
+fetch_start     EQU ram_vars+178 ; 4
+calc_addr       EQU ram_vars+182 ; 4
+fetch_wire      EQU ram_vars+186 ; 9
+rx_frame        EQU ram_vars+195 ; 81
+RAM_VARS_SIZE   EQU 276
+
+#ifdef CHAT83_APP
+    validate
+#endif
 .end
