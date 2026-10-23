@@ -133,6 +133,36 @@ class GeminiLayoutTests(unittest.TestCase):
                          ["assistant", "user", "assistant", "user"])
         self.assertEqual(model.contexts[-1][2]["content"], "WORLD")
 
+    def test_word_wrap_preserves_gemini_header_and_all_twelve_columns(self):
+        # PR #11 optional word-wrap must not reintroduce PC: from its
+        # pre-Gemini standalone implementation. Never rewrite committed IDs.
+        engine = ConversationEngine(
+            self.db, FakeGemini(("ABCDEFGHIJ", "KLMNO")), word_wrap=True)
+        engine.ask("HELLO", True)
+        self.settled(engine)
+        rows = self.lines()
+        self.assertEqual(rows, [
+            "YOU: HELLO".ljust(12),
+            "GEMINI>".ljust(12),
+            "ABCDEFGHIJKL",
+            "MNO".ljust(12),
+        ])
+        self.assertNotIn("PC:", "".join(rows))
+        self.assertEqual(
+            self.db.execute("SELECT content FROM messages "
+                            "WHERE role='assistant'").fetchone()[0],
+            "ABCDEFGHIJKLMNO")
+
+    def test_word_wrap_on_multiple_plain_words_no_prefix(self):
+        engine = ConversationEngine(
+            self.db, FakeGemini(("HELLO WOR", "LD GOOD", "BYE")), word_wrap=True)
+        engine.ask("HELLO", True)
+        self.settled(engine)
+        rows = self.lines()
+        self.assertEqual(rows[:2], ["YOU: HELLO".ljust(12), "GEMINI>".ljust(12)])
+        self.assertEqual(rows[2:], ["HELLO WORLD".ljust(12), "GOODBYE".ljust(12)])
+        self.assertTrue(all(len(row) == 12 for row in rows))
+
     def test_demo_provider_remains_backward_compatible(self):
         engine = ConversationEngine(self.db, DemoProvider())
         engine.ask("HELLO", True)

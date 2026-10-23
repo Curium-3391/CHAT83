@@ -1352,10 +1352,15 @@ send_update:
 
 ; ---- Input (only entered when no frame is inflight) -------------------
 input_screen:
+    ; Display paints all 48 editor cells regardless of input_len. Clear the
+    ; whole buffer, not only input_buf[0], or sent text reappears as phantom
+    ; undeletable characters when the editor is opened the next time.
+    ld hl,input_buf
+    ld bc,MAX_INPUT+1       ; 48 chars + NUL
+    call zero_fill
     xor a
     ld (input_len),a
     ld (input_cursor),a
-    ld (input_buf),a
     ld a,1
     ld (input_mode),a
     ld (alpha_mode),a
@@ -1559,18 +1564,22 @@ question_latest_set:
     ld a,(crc_state)
     ld (de),a
 
+    ; Exit the editor and draw the waiting/history screen BEFORE sending
+    ; the final Q request byte. The PC may start the C reply immediately
+    ; after receiving Q; repainting the LCD after enable_rx can starve the
+    ; TI's byte-at-a-time receive assist and cause Uno TX timeouts.
     xor a
     ld (input_mode),a
     call disable_rx
+    ld a,'Q'
+    ld (request_kind),a    ; show the ... waiting indicator in draw_history
+    call draw_history
     ld hl,question_wire
     ld a,(input_len)
     add a,4                 ; Q LEN TEXT LATEST CRC8
     call send_bytes
-    ld a,'Q'
-    ld (request_kind),a
     call reset_receiver_state
     call enable_rx
-    call draw_history
     ret
 
 ; Editor: rows 3-6 hold 4 x 12 characters, row 2 shows "YOU:" and a

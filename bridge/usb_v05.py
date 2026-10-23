@@ -83,9 +83,13 @@ def decode_frame(block: bytes) -> bytes:
 class UnoUsb:
     """Serial.read/write-compatible object for the TI application bridge."""
 
-    def __init__(self, serial_port, *, gap_ms: int = 35, timeout: float = 6.0):
+    def __init__(self, serial_port, *, gap_ms: int = 35, timeout: float = 6.0,
+                 batch_pause_ms: int = 0):
         if not 2 <= gap_ms <= 50:
             raise ValueError("gap_ms must be in 2..50")
+        if not 0 <= batch_pause_ms <= 1000:
+            raise ValueError("batch_pause_ms must be in 0..1000")
+        self.batch_pause_ms = batch_pause_ms
         self.ser = serial_port
         self.timeout = timeout
         self.gap_ms = gap_ms
@@ -216,6 +220,16 @@ class UnoUsb:
 
     def write(self, data: bytes) -> int:
         for pos in range(0, len(data), MAX_BATCH):
+            # PC sends one new T command only after Uno has ACKed all
+            # physical Link bits of the previous 16-byte batch. Optional
+            # extra quiet time tests whether TI's single-byte RX assist
+            # needs longer between blocks during heavy UI/history redraw.
+            # This is NOT a retry: retrying mid C frame corrupts framing.
+            if pos and self.batch_pause_ms:
+                if self.debug_link:
+                    print("[UNO-TX] batch boundary @{}: pause {}ms"
+                          .format(pos, self.batch_pause_ms), flush=True)
+                time.sleep(self.batch_pause_ms / 1000.0)
             chunk = data[pos:pos + MAX_BATCH]
             seq = self.next_seq
             self.next_seq = 1 if seq == 255 else seq + 1
@@ -232,4 +246,5 @@ class UnoUsb:
 
     def stats(self):
         return dict(tx=self.tx_count, rx=self.rx_count, errors=self.link_errors,
-                    gap_ms=self.gap_ms, rx_timeout_events=self.rx_timeout_events)
+                    gap_ms=self.gap_ms, batch_pause_ms=self.batch_pause_ms,
+                    rx_timeout_events=self.rx_timeout_events)

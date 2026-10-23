@@ -76,11 +76,82 @@ class StableRows:
         return result
 
 
+class WordRows:
+    """Optional streaming word wrap for the TI's 12-character text rows.
+
+    Keeps a word pending across arbitrary Gemini token boundaries, then
+    commits immutable padded display rows. Long words still split at 12
+    columns. Existing StableRows remains the backwards-compatible default.
+    """
+
+    def __init__(self, prefix: str = "PC: "):
+        if len(prefix) > 12 or any(not 32 <= ord(c) <= 126 for c in prefix):
+            raise ValueError("row prefix must fit within 12 printable ASCII columns")
+        self.prefix = prefix
+        self.partial = prefix
+        self.word = ""
+        self.space_pending = False
+
+    def _flush_word(self, ready: list[str]):
+        if not self.word:
+            return
+        sep = " " if self.space_pending and self.partial and not self.partial.endswith(" ") else ""
+        # Prefer a new row for an ordinary word; don't waste a whole row
+        # on just the leading "PC: " prompt or on a >12-character word.
+        if (self.partial and self.partial != self.prefix and
+                len(self.word) <= 12 and
+                len(self.partial) + len(sep) + len(self.word) > 12):
+            ready.append(self.partial.ljust(12))
+            self.partial = ""
+            sep = ""
+        self.partial += sep
+        while len(self.word) > 12 - len(self.partial):
+            width = 12 - len(self.partial)
+            self.partial += self.word[:width]
+            self.word = self.word[width:]
+            ready.append(self.partial)
+            self.partial = ""
+        self.partial += self.word
+        self.word = ""
+        if len(self.partial) == 12:
+            ready.append(self.partial)
+            self.partial = ""
+        self.space_pending = False
+
+    def feed(self, text: str) -> list[str]:
+        ready = []
+        for ch in ascii_text(text):
+            if ch == "\n":
+                self._flush_word(ready)
+                ready.append(self.partial.ljust(12))
+                self.partial = ""
+                self.space_pending = False
+            elif ch == " ":
+                self._flush_word(ready)
+                self.space_pending = True
+            else:
+                self.word += ch
+                if len(self.word) >= 12:
+                    self._flush_word(ready)
+        return ready
+
+    def finish(self) -> list[str]:
+        ready = []
+        self._flush_word(ready)
+        if self.partial:
+            ready.append(self.partial.ljust(12))
+        self.partial = ""
+        self.space_pending = False
+        return ready
+
+
 class ConversationEngine:
-    def __init__(self, db, provider, *, max_context_chars: int = 8000):
+    def __init__(self, db, provider, *, max_context_chars: int = 8000,
+                 word_wrap: bool = False):
         self.db = db
         self.provider = provider
         self.max_context_chars = max_context_chars
+        self.word_wrap = word_wrap
         self.stream_queue = SimpleQueue()
         self.worker = None
         self.cancel_event = Event()
@@ -215,7 +286,9 @@ class ConversationEngine:
         gemini = getattr(self.provider, "name", None) == "gemini"
         # Every Gemini response begins with its own durable SQLite row.
         # Never prepend 'PC: ' to the answer: it must start at column zero.
-        self.row_builder = StableRows(prefix="" if gemini else "PC: ")
+        prefix = "" if gemini else "PC: "
+        self.row_builder = (WordRows(prefix=prefix) if self.word_wrap
+                            else StableRows(prefix=prefix))
         if gemini:
             self._append_rows(["GEMINI>".ljust(12)])
         self.assistant_text = ""
@@ -362,7 +435,11 @@ def main():
     ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     ap.add_argument("--gap-ms", type=int, default=35,
                     help="Uno inter-byte Link gap (2..50 ms; first hardware test keep 35)")
+    ap.add_argument("--batch-pause-ms", type=int, default=0,
+                    help="experimental 0..1000ms quiet period between fully ACKed 16-byte TX batches")
     ap.add_argument("--max-context-chars", type=int, default=8000)
+    ap.add_argument("--word-wrap", action="store_true",
+                    help="optional streaming 12-column word wrap (also after GEMINI> header)")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--debug-link", action="store_true",
                     help="ask patched Uno to report physical link counters every 500ms")
@@ -374,6 +451,8 @@ def main():
     args = ap.parse_args()
     if not 2 <= args.gap_ms <= 50:
         ap.error("--gap-ms must be 2..50")
+    if not 0 <= args.batch_pause_ms <= 1000:
+        ap.error("--batch-pause-ms must be 0..1000")
     if not 0 <= args.reply_delay_ms <= 1500:
         ap.error("--reply-delay-ms must be 0..1500")
     model = args.model or {"demo": "offline", "gemini": "gemini-3.5-flash-lite",
@@ -382,13 +461,15 @@ def main():
     import serial
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with db_connect(args.db) as db:
-        engine = ConversationEngine(db, provider, max_context_chars=args.max_context_chars)
+        engine = ConversationEngine(db, provider, max_context_chars=args.max_context_chars,
+                                    word_wrap=args.word_wrap)
         print(f"CHAT83 v0.5 | COM={args.port} | provider={args.provider} | model={model} | DB={args.db}")
         with serial.Serial(args.port, baudrate=115200, timeout=0.02,
                            write_timeout=5) as ser:
             time.sleep(2.5)  # Arduino Uno auto-reset on serial open.
             ser.reset_input_buffer()
-            link = UnoUsb(ser, gap_ms=args.gap_ms, timeout=10)
+            link = UnoUsb(ser, gap_ms=args.gap_ms, timeout=10,
+                          batch_pause_ms=args.batch_pause_ms)
             link.connect()  # refuses to run with upstream serial2ti83 firmware.
             print(f"CHAT83 Uno v0.5 handshake OK; gap {args.gap_ms}ms")
             if args.debug_link:

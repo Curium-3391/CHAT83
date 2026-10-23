@@ -1,7 +1,7 @@
 name: Verify CHAT83 v0.5 integrated terminal
 on:
   push:
-    branches: [feat/v05-integrated-terminal]
+    branches: [main, feat/v05-integrated-terminal]
   pull_request:
     paths:
       - "arduino/CHAT83_Uno_v05/**"
@@ -10,6 +10,8 @@ on:
       - "bridge/protocol_v05.py"
       - "bridge/usb_v05.py"
       - "bridge/providers_v05.py"
+      - "docs/v05-integrated-terminal.md"
+      - "windows/start-chat83-v05.ps1"
       - "tests/**"
       - "tools/**"
       - ".github/workflows/verify-v05.yml"
@@ -143,6 +145,7 @@ jobs:
             bridge/requirements-v05*.txt build/CHAT83-v05-Windows/
           cp windows/start-chat83-v05.ps1 build/CHAT83-v05-Windows/
           cp docs/v05-integrated-terminal.md build/CHAT83-v05-Windows/README.md
+          cp docs/releases/v0.6.0.md build/CHAT83-v05-Windows/RELEASE-NOTES-v0.6.0.md
           cp docs/v06-gemini-provider.md build/CHAT83-v05-Windows/GEMINI-SETUP.md
           cp docs/v05-wire-protocol.md build/CHAT83-v05-Windows/WIRE-PROTOCOL.md
           test -s build/CHAT83-v05-Windows/requirements-v05-gemini.txt
@@ -151,5 +154,5 @@ jobs:
           test -n "$(find build/CHAT83-v05-Windows -name '*.hex' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
-          name: CHAT83-v05-Windows-complete-test-kit
+          name: CHAT83-v0.6.0-Windows-release-kit
           path: build/CHAT83-v05-Windows/
