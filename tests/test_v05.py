@@ -219,8 +219,59 @@ class EngineTests(unittest.TestCase):
         response = self.engine.sync()
         self.engine.last_reply = response
         self.assertEqual(self.engine.reply_retry(encode_retry(response[1])), response)
-        with self.assertRaises(ValueError):
-            self.engine.reply_retry(encode_retry(47))
+        self.assertIsNone(self.engine.reply_retry(encode_retry(47)))
+        # A valid retry is always byte-identical, never a duplicate Q.
+        self.assertEqual(self.engine.reply_retry(encode_retry(response[1])), response)
+        self.assertEqual(self.engine.reply_retry(encode_retry(response[1])), response)
+        self.assertIsNone(self.engine.reply_retry(encode_retry(response[1])))
+        self.assertEqual(self.engine.stale_retry_count, 2)
+
+    def test_orphan_retry_after_bridge_restart_keeps_sqlite_and_awaits_sync(self):
+        """R has only seq+CRC: cannot reconstruct an F START after PC restart."""
+        import contextlib
+        import io
+        save_message(self.db, "assistant", "SAVED")
+        before = self.db.execute("SELECT role,content FROM messages").fetchall()
+        # Simulated TI ON/OFF retains a pending F seq=7; the newly opened
+        # bridge has empty last_reply. It sends three valid stale retries,
+        # then the user presses MODE to send S without restarting COM2.
+        from protocol_v05 import encode_retry
+        class ReconnectedLink:
+            debug_link = True
+            gap_ms = 35
+            def __init__(self):
+                self.rx = bytearray(encode_retry(7) * 3 + b"S")
+                self.sent = []
+            def read(self, n=1):
+                if not self.rx:
+                    raise KeyboardInterrupt()
+                value = self.rx[:n]
+                del self.rx[:n]
+                return bytes(value)
+            def write(self, data):
+                self.sent.append(data)
+                return len(data)
+        link = ReconnectedLink()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            with self.assertRaises(KeyboardInterrupt):
+                serve(link, self.engine)
+        self.assertEqual(len(link.sent), 1, "never fabricate C for old R")
+        chunk = decode_chunk(link.sent[0])
+        self.assertTrue(chunk.flags & RESET)
+        self.assertEqual(chunk.rows, ("PC: SAVED".ljust(12),))
+        self.assertIn("[RESYNC NEEDED] Ignored stale/unknown R seq=7", stdout.getvalue())
+        self.assertIn("SYNC -> 1 rows", stdout.getvalue())
+        self.assertEqual(self.engine.stale_retry_count, 3)
+        self.assertEqual(self.db.execute(
+            "SELECT role,content FROM messages").fetchall(), before)
+
+    def test_invalid_retry_crc_remains_rejected(self):
+        frame = bytearray(encode_retry(3))
+        frame[-1] ^= 0x80
+        with self.assertRaisesRegex(ValueError, "invalid retry"):
+            self.engine.reply_retry(bytes(frame))
+        self.assertEqual(self.engine.stale_retry_count, 0)
 
     def test_host_turnaround_delay_and_pre_tx_request_log(self):
         import contextlib

@@ -138,3 +138,45 @@ database rows, the immutable history indexes and `F`/`U` reply frames.
 Real TI-83 Plus LCD presentation of this **new layout** still needs user
 acceptance. Preserve known-good `--gap-ms 35 --reply-delay-ms 250`
 while checking it.
+
+
+### TI-83 Plus power-cycle / Windows Bridge restart: stale `R` recovery
+
+**2026-10-21 real-device report:** Gemini `GEMINI>` heading worked, but after
+powering off / reconnecting and scrolling backward until `LOADING`, a newly
+started Bridge printed only `rx=3, tx=0` then terminated with
+`LINK ERROR: cannot retry unknown/exhausted frame` before any new `SYNC`.
+A three-byte `R + SEQ + CRC8` is an application retry. The TI may still
+be waiting on a reply from before the PC process restarted, while the PC
+has **no** `last_reply` in memory. This is a state-resynchronization error,
+not an API-key or SQLite failure. Physical proof of the calculator's
+exact state at power-off is not available.
+
+**Bridge resilience fix (this branch):** CRC-validated `R` that has no
+matching cached reply (including retries exhausted in this PC process) is
+ignored with a bounded `[RESYNC NEEDED]` warning; the Windows serial loop
+keeps listening. This preserves the SQLite conversation and does **not**
+pretend that a `FETCH` reply can be reconstructed from `R`: the retry
+contains a SEQ but not the original historical START. Replaying a
+`SYNC` C with SEQ=0 during an active F would break the Z80 client's
+response validation. A correct, matching retry still resends the original
+exact bytes, including CRC, without issuing another LLM request.
+
+**What to do on the calculator:**
+- Start the Windows Bridge first; then exit CHAT83 using `CLEAR` (if
+  permitted by the current screen) and reopen it from APPS / `Asm(prgmC83V5)`
+  to start a fresh `S` request.
+- If the calculator already displays its own `LINK ERROR` screen, press
+  `MODE` to retry with a new `S`. If it is still on `LOADING`, allow
+  its finite retries to finish before using MODE.
+- Keep `--gap-ms 35 --reply-delay-ms 250` during the test, and look
+  for `[RESYNC NEEDED]` followed eventually by
+  `[TX-BEGIN] SYNC ...` and `SYNC -> ...`.
+- Do not delete `chat83.sqlite3`, don't manually send a fabricated C
+  reply, and don't repeatedly restart Windows when one stale R arrives.
+
+**Limit:** This is safe recovery of the *Windows Bridge*, not fully
+automatic restoration of a suspended TI history scroll. Automatic
+restoration requires a compatible Z80 client change that can initiate a
+fresh S after exhausting a request whose old reply is unavailable.
+Validation of the original device after power cycles is still pending.
