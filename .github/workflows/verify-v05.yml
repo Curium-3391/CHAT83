@@ -10,6 +10,8 @@ on:
       - "bridge/protocol_v05.py"
       - "bridge/usb_v05.py"
       - "bridge/providers_v05.py"
+      - "docs/v05-integrated-terminal.md"
+      - "windows/start-chat83-v05.ps1"
       - "tests/**"
       - "tools/**"
       - ".github/workflows/verify-v05.yml"
