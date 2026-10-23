@@ -1,0 +1,56 @@
+name: Publish CHAT83 v0.6.0 (one-shot)
+
+# One verified release only. The workflow checks the exact already-passed
+# main commit and its GitHub Actions run before creating any tag or release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-v060.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the already CI-verified release source
+        uses: actions/checkout@v4
+        with:
+          ref: 2db40f953d3b7a790e8529382a32056483ba3190
+          persist-credentials: false
+      - name: Verify CI and publish archived Windows bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: 2db40f953d3b7a790e8529382a32056483ba3190
+          RUN_ID: "39945179004"
+          TAG: v0.6.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_sha="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)"
+          ci_result="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .conclusion)"
+          if [[ "$ci_sha" != "$RELEASE_SHA" || "$ci_result" != "success" ]]; then
+            echo "Release refused: target does not match successful main-branch CI."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; exiting without overwriting."
+            exit 0
+          fi
+          mkdir -p dist/CHAT83-v0.6.0-Windows
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY"             --name CHAT83-v0.6.0-Windows-release-kit             --dir dist/CHAT83-v0.6.0-Windows
+          test -s dist/CHAT83-v0.6.0-Windows/CHAT83.8xk
+          test -s dist/CHAT83-v0.6.0-Windows/C83V5.8xp
+          test -s dist/CHAT83-v0.6.0-Windows/bridge_v05.py
+          test -s dist/CHAT83-v0.6.0-Windows/RELEASE-NOTES-v0.6.0.md
+          if find dist/CHAT83-v0.6.0-Windows -type f                \( -name "*.sqlite*" -o -name "*.env" -o -name ".env*" \)                | grep -q .; then
+            echo "Release refused: a private data file was included."
+            exit 1
+          fi
+          (cd dist && zip -qr CHAT83-v0.6.0-Windows.zip CHAT83-v0.6.0-Windows)
+          (cd dist && sha256sum CHAT83-v0.6.0-Windows.zip > CHAT83-v0.6.0-Windows.zip.sha256)
+          gh release create "$TAG"             dist/CHAT83-v0.6.0-Windows.zip             dist/CHAT83-v0.6.0-Windows.zip.sha256             --repo "$GITHUB_REPOSITORY" --target "$RELEASE_SHA"             --title "CHAT83 v0.6.0 — Gemini on the TI-83 Plus"             --notes-file docs/releases/v0.6.0.md --latest
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY"             --json tagName,isDraft,isPrerelease,url,assets
