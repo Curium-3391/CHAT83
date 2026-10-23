@@ -23,7 +23,6 @@ Each Gemini answer shows a separate `GEMINI>` row, followed by 12-column text. T
 
 See [v0.6.0 release notes](docs/releases/v0.6.0.md), [Gemini instructions](docs/v06-gemini-provider.md), and [protocol documentation](docs/v05-wire-protocol.md).
 
-<escape></escape>
 
 CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno. v0.2–v0.4 used upstream [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83); **v0.5 uses a separate custom Uno firmware** with COBS/CRC8 at 115200 baud, and is not TiLP-compatible. The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
 
@@ -118,7 +117,7 @@ py bridge/bridge_v03.py --port COM2
 
 On the calculator run `Asm(prgmCHAT83)`, send `HELLO` and `DEMO`, then scroll UP to the oldest record and press UP a few more times. The PC log should show no extra `OLDER` request at the global beginning. Scroll to the newest record and verify no redundant `NEWER` request. The `>` and `_` cursors should track navigation and typing.
 
-Persistent conversations are stored in a gitignored `chat83.sqlite3` file beside the Python script. The SQLite schema is unchanged; the existing database from v0.3 can be reused. The LLM connection is still planned, **not yet implemented**.
+Historical v0.3 note: persistent conversations were stored in a gitignored `chat83.sqlite3` file beside the Python script; the database schema remains reusable. Gemini API support was implemented in the later v0.5/v0.6 bridge.
 
 ## Experimental v0.3.2: Fast incremental replies
 
@@ -135,7 +134,7 @@ The earlier v0.3.1 re-sent **all 24 cached rows after every question**, creating
 ## Experimental v0.4 and v0.5
 
 - **v0.4** (`C83V4`, `bridge_v04.py`, upstream serial2ti83): non-blocking receive through the original TI-83 Plus Port 00h/05h receive assist, `_GetCSC` keyboard polling and a 48-row predictive cache. See [v04-cooperative-link.md](docs/v04-cooperative-link.md).
-- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Partial hardware success confirmed 2026-10-21**: with the user's actual TIP=D3 / RING=D6 wiring and `--reply-delay-ms 250 --gap-ms 35`, physical TI→PC `S` and `Q 'HELLO'` completed, and PC→TI two reply frames (45+33=78 bytes) were fully acknowledged with zero errors. The calculator screen's `PC: WORLD` display has **not yet been confirmed**; do not mark v0.5 fully hardware verified. Earlier without turnaround delay Uno TX failed, so timing stability remains under investigation. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
+- **v0.5** (`CHAT83.8xk` App or `C83V5.8xp`, `CHAT83_Uno_v05.ino`, `bridge_v05.py`): new 115200-baud COBS/CRC8 Uno firmware, CRC8 application frames with retransmission, a four-line 48-character editor, and streaming replies from demo, OpenAI or Ollama providers. The calculator client is a signed Flash App launched from the **APPS** menu, with inverse title/hint bars, a highlighted selection and a scrollbar. `C83DEMO.8xk` is an offline UI preview for emulators. **Partial hardware success confirmed 2026-10-21**: with the user's actual TIP=D3 / RING=D6 wiring and `--reply-delay-ms 250 --gap-ms 35`, physical TI→PC `S` and `Q 'HELLO'` completed, and PC→TI two reply frames (45+33=78 bytes) were fully acknowledged with zero errors. The calculator **subsequently confirmed** `PC: WORLD` on its physical LCD. Gemini API multi-turn streaming was also verified later; see the release guide at the top. Earlier without turnaround delay Uno TX failed, so timing stability remains under investigation. **Install order matters**: transfer `C83V5.8xp` with TiLP under the original serial2ti83 *before* flashing the v0.5 Uno firmware, because the v0.5 firmware does not support TiLP. See [v05-integrated-terminal.md](docs/v05-integrated-terminal.md) and [v05-wire-protocol.md](docs/v05-wire-protocol.md).
 
 Both run on the **original TI-83 Plus only**; port 05h means something different on the TI-83 Plus SE and TI-84 Plus.
 
