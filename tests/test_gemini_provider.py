@@ -121,7 +121,10 @@ class GeminiProviderTests(TestCase):
                 rows = [r[0] for r in db.execute(
                     "SELECT text FROM display_lines ORDER BY id"
                 )]
-                self.assertIn("PC: WORLD", "".join(rows))
+                self.assertEqual(rows[1], "GEMINI>".ljust(12))
+                self.assertEqual(rows[2], "WORLD".ljust(12))
+                self.assertNotIn("PC: ", "".join(rows[1:]))
+                self.assertTrue(all(len(row) == 12 for row in rows))
             finally:
                 db.close()
 

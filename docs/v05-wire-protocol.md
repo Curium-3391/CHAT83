@@ -106,6 +106,15 @@ The PC SQLite DB contains a persistent `messages` table and append-only
 The worker publishes only fully completed 12-character lines and one padded
 tail line when the model finishes. Hence historical row numbering stays stable.
 
+When `--provider gemini`, an independent `GEMINI>` (space-padded to
+12 bytes) row is appended before model generation; all following assistant
+text rows start at column 0 with no inline `PC: ` label. The `GEMINI>`
+row is attached to the same assistant `message_id` in SQLite and is
+visible through the unchanged `C` reply format in SYNC/FETCH/UPDATE.
+The assistant `messages.content` remains only model output, not the
+visual heading; existing saved `PC:` rows are not rewritten.
+Demo/other providers retain the previous prefix.
+
 ## D. Live delivery and bounded scheduling
 
 After a Q, C reports `BUSY`. The client, while following the newest

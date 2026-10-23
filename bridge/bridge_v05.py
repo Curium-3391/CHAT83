@@ -45,10 +45,17 @@ def ascii_text(text: str) -> str:
 
 
 class StableRows:
-    """Commit only completed rows; never rewrite earlier line IDs during streaming."""
+    """Commit complete 12-column rows; existing display row IDs never shift.
 
-    def __init__(self):
-        self.partial = "PC: "
+    `prefix` is a first-row inline label for legacy providers. Gemini uses
+    an independent, persisted `GEMINI>` row and passes an empty prefix so
+    EVERY assistant content row has all 12 columns available.
+    """
+
+    def __init__(self, prefix: str = "PC: "):
+        if len(prefix) > 12 or any(not 32 <= ord(c) <= 126 for c in prefix):
+            raise ValueError("row prefix must fit within 12 printable ASCII columns")
+        self.partial = prefix
 
     def feed(self, text: str) -> list[str]:
         ready = []
@@ -202,7 +209,12 @@ class ConversationEngine:
         with self.db:
             cur = self.db.execute("INSERT INTO messages(role,content) VALUES('assistant','')")
             self.assistant_id = cur.lastrowid
-        self.row_builder = StableRows()
+        gemini = getattr(self.provider, "name", None) == "gemini"
+        # Every Gemini response begins with its own durable SQLite row.
+        # Never prepend 'PC: ' to the answer: it must start at column zero.
+        self.row_builder = StableRows(prefix="" if gemini else "PC: ")
+        if gemini:
+            self._append_rows(["GEMINI>".ljust(12)])
         self.assistant_text = ""
         self.generating = True
         self.cancel_event.clear()
