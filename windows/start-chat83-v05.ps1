@@ -6,7 +6,9 @@ param(
   [string]$Model = "",
   [int]$GapMs = 35,
   [int]$ReplyDelayMs = 250,  # real hardware-verified turnaround
+  [int]$BatchPauseMs = 0,  # optional host pause between 16-byte bursts
   [switch]$DebugLink,
+  [switch]$WordWrap,
   [string]$Db = "",
   [switch]$Adaptive,
   [switch]$Verbose,
@@ -19,6 +21,9 @@ if ($GapMs -lt 2 -or $GapMs -gt 50) {
 if ($ReplyDelayMs -lt 0 -or $ReplyDelayMs -gt 1500) {
   throw "ReplyDelayMs must be between 0 and 1500"
 }
+if ($BatchPauseMs -lt 0 -or $BatchPauseMs -gt 1000) {
+  throw "BatchPauseMs must be between 0 and 1000"
+}
 if (-not $Db) {
   $Db = Join-Path $PSScriptRoot "chat83_v05.sqlite3"
 }
@@ -29,11 +34,13 @@ if (-not (Test-Path $script)) {
 $argsList = @($script, "--port", $Port, "--provider", $Provider,
               "--gap-ms", [string]$GapMs, "--db", $Db,
               "--ollama-url", $OllamaUrl,
-              "--reply-delay-ms", [string]$ReplyDelayMs)
+              "--reply-delay-ms", [string]$ReplyDelayMs,
+              "--batch-pause-ms", [string]$BatchPauseMs)
 if ($Model) { $argsList += @("--model", $Model) }
 if ($Adaptive) { $argsList += "--adaptive" }
 if ($Verbose) { $argsList += "--verbose" }
 if ($DebugLink) { $argsList += "--debug-link" }
-Write-Host "Starting CHAT83 v0.5 on $Port / provider=$Provider / gap=$($GapMs)ms / turnaround=$($ReplyDelayMs)ms"
+if ($WordWrap) { $argsList += "--word-wrap" }
+Write-Host "Starting CHAT83 v0.5 on $Port / provider=$Provider / gap=$($GapMs)ms / turnaround=$($ReplyDelayMs)ms / batchpause=$($BatchPauseMs)ms"
 & py @argsList
 exit $LASTEXITCODE
