@@ -438,3 +438,137 @@ USB、Uno 以及實體 Link 傳送層在這一次測試**沒有回報錯誤**。
 高負載長串流、連續問答多次與實際雲端 LLM provider。
 這些可在後續獨立 PR 改進，不影響將已通過的
 **v0.5 demo 端到端驗收里程碑**納入 main。
+
+
+### 2026-10-21 第三次實機待測：重開編輯器殘影與縮短 turnaround
+
+**使用者回報（Gemini API 已在真機上運作）：** 送出訊息後再次按
+ENTER 進入「NEW MESSAGE」，畫面上還能看到先前送出的文字，
+卻不能按 DEL 刪掉，也無法用 LEFT/RIGHT 移動游標。
+
+**已從原始碼找到可重現的成因：** `input_screen` 重設
+`input_len=0`、`input_cursor=0`，卻只清掉 `input_buf` 的
+**第一個 byte**；`draw_input` 直接畫滿 48 個字元格，
+使以前內容殘留，且因為長度與游標已為 0，DEL／RIGHT 都視為
+空輸入而不動。修正版在進入編輯器時用 `zero_fill`
+將 **49-byte buffer（48 字 + NUL）完整清零**。
+
+**同時將 Q 傳送和畫面重繪重新排序：**
+先離開輸入模式、關閉 RX assist、把 `request_kind` 設成 Q、
+**先畫好「等待回覆」的 HISTORY 畫面**，再呼叫
+`send_bytes` 送出 Q；最後 reset RX 並 enable RX，
+其後不再呼叫完整 `draw_history`。這個修改是為了避免
+PC→TI 回覆已開始，而 Z80 卻被 LCD 重繪阻塞，造成
+Uno TX timeout。注意：這是**實機時序假說**，仍須在真機驗證。
+
+#### 安裝與安全回退
+
+- 本分支只修改 `calculator/CHAT83_v05_chat.asm`，
+  及加入針對 App + ASM program 的 Z80 模擬回歸測試。
+  **Uno 使用 TIP=D3、RING=D6，不修改韌體或接線。**
+- 測試包中新的 `CHAT83.8xk`（或 `C83V5.8xp`）
+  必須**重新傳到 TI-83 Plus**，替換原版 Z80 程式。
+  **只替換 Python 並無法修復 83 端的輸入編輯器。**
+- 若用同一塊 Uno + TiLP 傳檔，必須先刷回
+  `serial2ti83` 並將它的腳位常數也改成
+  `TIP=3; RING=6;`，完成傳輸後再刷回 CHAT83 v0.5
+  韌體（TIP=D3、RING=D6；115200 baud）。
+  重新刷韌體之前先拔下 TI 的 2.5mm 插頭。
+- 正式穩定版仍在 `main`；本次修改在
+  `fix/ti83-editor-reset-and-turnaround` **Draft PR**，
+  若不順利可以傳回原版 `CHAT83.8xk` 恢復舊版。
+
+#### 分兩階段測試
+
+1. **先維持已證實的設定：**
+
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --debug-link
+   ```
+
+   在計算機提問 `HELLO`，等回覆完成；再按 ENTER。
+   此時 NEW MESSAGE 內容應當是空白（只有空的反白游標），
+   DEL／RIGHT 不會移動是正常的，因為長度等於 0。
+   輸入 `HELLO`、按 LEFT、DEL，必須看到文字與游標確實更新，
+   並能送出第二次問題。再測 Gemini UPDATE 長答及捲動。
+
+2. **僅在第一階段成功後**，保持 Uno、App 不變，
+   比較 `--reply-delay-ms 100`、`50`、`0`。
+   每次都重新啟動 Bridge、在 TI 問至少兩次短問題，
+   確認 LCD 內容與 `[UNO-DIAG] tx_to=0, rx_to=0`。
+   若出現任何 `Uno TI TX failed`、亂碼或卡住，
+   立即退回 250ms；**模擬器無法證明 0ms 實機安全**。
+   運作穩定時，再單獨量測 `--gap-ms` 的縮減，
+   不要在同一輪同時調整兩個參數。
+
+CI 的 App/Program Z80 emulator 已驗證完整清空、
+重開後按鍵、第二次發送與在第一個 Q byte 前完成重畫，
+但物理 UART/Link 的時序測試仍由真機補足。
+
+#### Gemini 長篇閱讀實驗（獨立於 Link 時序）
+
+Python Bridge 新增可選的 `--word-wrap`（預設關閉），在
+12 字元寬度下**盡量不拆開英文單字**，並正確跨越 Gemini
+streaming token 分界來暫存未完成的詞。超過單行的長詞仍可分行。
+已提交到 SQLite 的行保持不可變，避免拉取舊歷史時文字位移。
+原有 `StableRows` 不變，沒啟用 `--word-wrap` 的顯示結果
+與之前完全相同。
+
+此功能只需替換套件內的 `bridge_v05.py`，
+**不需要再刷 Uno 或另裝 App**（但上面的輸入殘影修正
+必須更新 App）。請在 250ms 穩定驗證後才另測：
+
+```powershell
+py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --word-wrap
+```
+
+測試完成再考慮降低回覆延遲，避免把分行 Bug 和位元握手時序混為一談。
+
+
+#### 2026-10-21 第二階段真機回報：FETCH OLDER @1 (6) 的 TX_WAIT_ACK
+
+使用者回報（新 App／250ms turnaround、35ms inter-byte gap）
+在上捲讀取 SQLite 較舊紀錄時：
+
+```text
+[TX-BEGIN] FETCH OLDER @1 (6): 81 bytes (6 batches), turnaround=250ms
+[UNO-DIAG] start=248 ack=248 rx_bytes=31 rx_to=0 tx_to=0 state=3 TIP=L RING=H last_rx=0x19
+Uno link statistics: {'tx': 196, 'rx': 31, 'errors': 0, 'gap_ms': 35, 'rx_timeout_events': 0}
+LINK ERROR: Uno TI TX failed at 16: b'A\\x10\\x01'
+```
+
+**已確認的物理意義：** `state=3` 是 Uno 韌體
+`TX_WAIT_ACK`。此時 Uno 在 TIP 拉低等待對方在 RING 回應，
+但目前沒有偵測到 ACK；`A seq=0x10 status=1` 是
+Uno 在 `BIT_TIMEOUT_US=50000` us 內沒等到 TI ACK。
+`at 16` 指 **81-byte reply 的第二個 16-byte USB 批次起始偏移**
+（第一批已獲 ACK）；不能說第 17 個 byte 肯定失敗，
+也不能假設 `errors=0` 意味著沒有傳送逾時
+（那是 Python `E` event 統計，與 `A status=1` 不同）。
+資料來自實機，源頭不是 Gemini API 或 Uno 物理腳位設定；
+但 **TI 為什麼沒有 ACK 尚未證明**，可能涉及接收 assist、
+歷史按鍵的 LCD 刷新、跨 batch 時序或特定負載。
+
+**暫定安全測試，不要繼續降低回覆延遲：**
+
+1. 先保留舊、已成功的 `--reply-delay-ms 250`，先把
+   `--gap-ms 35` 改成 `--gap-ms 50`，不改其他設定，
+   以同樣流程（提問兩次、按 UP 捲到上界、等 FETCH OLDER）
+   觀察是否仍於第 16 byte 批次附近失敗。
+2. 若 50 ms 仍失敗，可改用此新測試包的 Python
+   `--batch-pause-ms 150`，對每個**已成功 ACK 的 16-byte**
+   分組之間加上 150ms 休息（**不是**位元或單 byte ACK timeout
+   的自動重試）。建議先使用 `--gap-ms 35` 維持可比性：
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250 --batch-pause-ms 150 --debug-link
+   ```
+   在輸出中會有 `[UNO-TX] batch boundary @16: pause 150ms`。
+3. **不要同時改 250ms、35ms 和 batch pause。** 每次只調一項，
+   才能判斷改善是否有效。若再次 TX timeout，
+   應保留 `TX-BEGIN`／`UNO-DIAG`／`failed at N`，
+   並說明計算機畫面（仍在 HISTORY、顯示 LINK ERROR、或卡住）。
+   TX timeout 後需先重啟 bridge／App、必要時重同步，切勿盲目
+   重送剩餘 65 bytes；在 C reply 中途重送會破壞協定框架。
+
+`--batch-pause-ms` 預設為 0，不影響原本已確認的 Demo／Gemini
+路徑。它屬於診斷變因，不應當作已證明的根因修復。
