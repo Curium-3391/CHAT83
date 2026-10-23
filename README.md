@@ -1,8 +1,29 @@
 # CHAT83
 
-**A retro serial terminal for the TI-83 Plus, on the road to LLM connectivity.**
+**A Gemini-enabled retro AI terminal for the original TI-83 Plus, powered by an Arduino Uno and a Windows Python bridge.**
 
-> **Current status (2026-10-21):** v0.5 has its first **confirmed end-to-end real-hardware demo** on an original TI-83 Plus: calculator `HELLO` → Python demo provider → calculator screen `PC: WORLD`. The working setup is Uno **TIP=D3 / RING=D6**, USB **COM2 at 115200 baud**, `--gap-ms 35 --reply-delay-ms 250`. Prior v0.2/v0.3.2 and v0.4 versions were also hardware-tested. This confirms a demo round trip, **not** long-term reliability, streaming performance, or a live LLM API integration.
+> **CHAT83 v0.6.0 release preparation (2026-10-23):** the original TI-83 Plus has physically run Gemini API multi-turn streaming, displayed the standalone `GEMINI>` heading, and successfully read persistent history. v0.6.0 integrates the editor reset fix, reconnect resilience and optional word/batch pacing. Z80 and Python regressions are automated; **full power-cycle recovery and reduced transmission delays are not yet proven over extended hardware runs**. Keep `--gap-ms 35 --reply-delay-ms 250` as the proven default settings.
+
+## CHAT83 v0.6.0 — install and run
+
+The release uses the **original TI-83 Plus** (not TI-83 Plus SE / TI-84 Plus), Arduino Uno, 2.5 mm TI Link cable, Windows PC with Python 3 and USB. The Uno uses **physical TIP=D3, RING=D6, sleeve=GND**. The v0.6.0 project keeps the existing v0.5 wire protocol, executable names and Arduino firmware.
+
+1. Transfer the **newly assembled `CHAT83.8xk`** signed App (or `C83V5.8xp` assembly program) to the TI-83 Plus. If you use the same Uno for TiLP uploads, first flash its upstream `serial2ti83`-compatible firmware **configured for the physical D3/D6 wiring**, close TiLP after transfer, then flash back the bundled CHAT83 Uno v0.5 bridge firmware. Never attach two competing adapters to the link port.
+2. Extract the Windows test-kit files into a directory such as `$HOME\Downloads\CHAT83_v05`; keep the existing `chat83.sqlite3` history DB if upgrading.
+3. Install dependencies locally with `py -m pip install -r requirements-v05-gemini.txt`; obtain `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey) and store it **only in a Windows user environment variable**. **Never put the key in screenshots, chat logs, code or this repository.** Open a fresh PowerShell after setting it.
+4. Run the working baseline (adjust `COM2` if needed):
+
+   ```powershell
+   py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250
+   ```
+
+5. Open `CHAT83` in APPS. Press ENTER to ask a question, use ALPHA for letters, arrow keys to navigate history, and CLEAR to exit.
+
+Each Gemini answer shows a separate `GEMINI>` row, followed by 12-column text. The previous message's ghost text is cleared on returning to the editor. Optional `--word-wrap` favors whole words; `--batch-pause-ms 150` is a **diagnostic** for rare history FETCH stalls and defaults to zero. The host ignores unknown/stale `R` requests after reconnect rather than crashing; if the calculator has an unfinished request, use MODE from LINK ERROR or relaunch the App to resynchronize. The bridge does **not** automatically recover an interrupted history-scroll cursor.
+
+See [v0.6.0 release notes](docs/releases/v0.6.0.md), [Gemini instructions](docs/v06-gemini-provider.md), and [protocol documentation](docs/v05-wire-protocol.md).
+
+<escape></escape>
 
 CHAT83 lets a TI-83 Plus talk to a Windows PC through an Arduino Uno. v0.2–v0.4 used upstream [jw0k/serial2ti83](https://github.com/jw0k/serial2ti83); **v0.5 uses a separate custom Uno firmware** with COBS/CRC8 at 115200 baud, and is not TiLP-compatible. The calculator runs a Z80 Assembly client built with SPASM-ng; the PC runs a Python/pyserial application-level bridge.
 
@@ -39,7 +60,7 @@ bridge/
   bridge.py               # v0.2 serial2ti83 responder
   bridge_v03.py           # v0.3.2 SQLite history bridge
   bridge_v04.py, probe_v04.py, prefetch_v04.py
-  bridge_v05.py           # v0.5 bridge: SQLite + demo/OpenAI/Ollama
+  bridge_v05.py           # v0.6: SQLite + demo/Gemini/OpenAI/Ollama
   protocol_v05.py         # v0.5 app frames (CRC8)
   usb_v05.py              # v0.5 USB COBS/CRC8 transport to the Uno
   providers_v05.py        # v0.5 LLM providers
@@ -135,10 +156,9 @@ Both run on the **original TI-83 Plus only**; port 05h means something different
 See the [development log](docs/development-log.md) for the distinction between confirmed results and planned features.
 
 
-## Experimental Gemini API integration (new PR)
+## Historical milestone: Gemini API integration (merged)
 
-Google Gemini support is developed on `feat/v06-gemini-provider` so the
-hardware-accepted v0.5 on `main` remains stable. No Arduino firmware,
+Google Gemini support was originally developed on `feat/v06-gemini-provider` and merged into `main`. The older instructions below are retained as an engineering milestone. No Arduino firmware,
 Z80 program, or Link wiring changes are necessary. The Gemini backend uses
 the official `google-genai` SDK and the existing SQLite conversation history.
 
@@ -151,13 +171,11 @@ py -m pip install -r "$HOME\Downloads\CHAT83_v05\requirements-v05-gemini.txt"
 py "$HOME\Downloads\CHAT83_v05\bridge_v05.py" --port COM2 --provider gemini --model gemini-3.5-flash-lite --gap-ms 35 --reply-delay-ms 250
 ```
 
-You can substitute `--model gemini-3.8-flash`. Neither the real Google API
-nor Gemini-on-calculator answers have been verified yet; mock tests cannot
-make external API calls. See [Gemini setup and status](docs/v06-gemini-provider.md).
+You can substitute `--model gemini-3.8-flash`. **Historical note:** At the time of initial integration, real-device Gemini tests had not been run; they were subsequently completed and confirmed by the user. See [Gemini setup and status](docs/v06-gemini-provider.md).
 
-### Gemini response display — proposed
+### Gemini response display — verified
 
-In the `feat/gemini-standalone-header` branch, Gemini replies now have
+After merging PR #12, Gemini replies have
 their own `GEMINI>` history row rather than `PC: ` prepended to the first
 answer. Every subsequent Gemini answer row can use **all 12 characters**:
 
@@ -171,8 +189,7 @@ This updates the Windows Python bridge only; no new Uno firmware or
 calculator App is needed. The heading is stored in the existing
 `display_lines` SQLite table, so `SYNC`, `FETCH`, `UPDATE`, and
 scrolling all use the normal immutable 12-character rows. Historical
-`PC: ` records and `demo` responses are unchanged. This is pending
-real-device acceptance in a **Draft PR**, not merged to `main`.
+`PC: ` records and `demo` responses are unchanged. The user confirmed the `GEMINI>` display works on physical hardware.
 
 ## Hardware milestone: v0.5 demo accepted (2026-10-21)
 
