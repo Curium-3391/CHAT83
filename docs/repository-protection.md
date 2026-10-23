@@ -4,7 +4,7 @@
 
 ## Current intent
 
-- Preserve the repository's **Private** visibility until the owner deliberately decides to publish. Publishing the v0.6.0 GitHub Release does not make a private repository or release publicly accessible.
+- **Current visibility: Public (owner-approved, verified 2026-10-23).** The v0.6.0 release, repository source and Git history are now publicly accessible. Switching visibility to public does not replace active branch/tag rulesets. Review all historic commits for credentials before treating public exposure as fully audited.
 - Protect `main` from deletion, force pushes and direct changes without a pull request.
 - Require all four existing GitHub Actions jobs to succeed before merging: `python`, `z80`, `uno`, `link-handshake-mock`. The CI workflow was updated in PR #16 to run even on documentation-only pull requests.
 - Require resolution of review conversations. Set **zero mandatory independent approvals** while there is only one active maintainer; enable one reviewer after another trusted contributor is available.
@@ -46,12 +46,18 @@ Existing tag `v0.6.0` is intended to be protected as well; the ruleset does not 
 - [ ] [`main` branch](https://github.com/Curium-3391/CHAT83/branches) appears protected.
 - [ ] A test documentation PR runs all four jobs and cannot merge before required checks pass.
 - [ ] The `v*` tag rule shows deletion and rewriting restricted; future new tags are still allowed.
-- [ ] Repository visibility remains **Private**.
+- [ ] Repository visibility is **Public**, and both the `main` branch and `v*` rulesets remain **Active** after the visibility change.
 - [ ] [Actions settings](https://github.com/Curium-3391/CHAT83/settings/actions) default workflow permissions are least-privilege (read-only when possible); the release workflow explicitly requests `contents: write` for publishing.
 - [ ] Review [GitHub security settings](https://github.com/Curium-3391/CHAT83/settings/security_analysis) for available secret scanning/push protection, especially before considering public visibility.
 - [ ] Any previously disclosed `GEMINI_API_KEY` has been **revoked** and replaced. `.gitignore` cannot undo exposure of a key already shared or committed.
 
 **Important caution:** After importing a strict, no-bypass ruleset, automated release workflows or administrator direct writes to `main` may be rejected. Use PRs and green CI. If a workflow must commit to a protected branch in the future, redesign it to propose a PR instead of weakening protection.
+
+## Public release verification (2026-10-23)
+
+The user authorized a public release of the repository. A subsequent GitHub API check reported `private=false`, `visibility=public`, `main.protected=true` and both rulesets `enforcement=active`.
+
+A pattern-based scan of the **56 tracked files in current `main`** detected no common Google/OpenAI/GitHub credential strings or private key headers. This is **not** a complete history scan, so it does not certify that earlier commits or deleted files never held credentials. Sampled commit metadata includes non-`noreply` author email addresses, which are public as part of Git history. Revoke and rotate any Gemini API key previously pasted into chat or logs, even if it never appeared in the repository.
 
 ## Notes on what these rules cannot do
 
