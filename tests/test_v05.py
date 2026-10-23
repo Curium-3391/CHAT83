@@ -6,7 +6,7 @@ import time
 import unittest
 
 from bridge_v03 import db_connect, save_message
-from bridge_v05 import ConversationEngine, StableRows, serve
+from bridge_v05 import ConversationEngine, StableRows, WordRows, serve
 from protocol_v05 import (
     BUSY, NEWER, RESET, Chunk, RangeRequest,
     encode_chunk, decode_chunk, encode_fetch, decode_fetch,
@@ -83,6 +83,33 @@ class UsbTests(unittest.TestCase):
         serial.from_calc(b"HELLO")
         self.assertEqual(b"".join(link.read(1) for _ in range(5)), b"HELLO")
         self.assertEqual(link.rx_count, 5)
+
+    def test_extra_pause_only_between_acknowledged_16byte_batches(self):
+        from unittest.mock import patch
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, gap_ms=35, timeout=0.02, batch_pause_ms=150)
+        link.connect()
+        payload = bytes(range(33))
+        with patch("usb_v05.time.sleep") as sleeper:
+            self.assertEqual(link.write(payload), len(payload))
+        self.assertEqual(serial.calc_sent, payload)
+        self.assertEqual(link.tx_count, 33)
+        self.assertEqual(sleeper.call_count, 2)
+        sleeper.assert_any_call(0.15)
+        self.assertEqual(link.stats()["batch_pause_ms"], 150)
+
+    def test_batch_pause_default_preserves_existing_transport(self):
+        from unittest.mock import patch
+        serial = MockUsbSerial()
+        link = UnoUsb(serial, gap_ms=35, timeout=0.02)
+        link.connect()
+        with patch("usb_v05.time.sleep") as sleeper:
+            link.write(bytes(range(81)))
+        sleeper.assert_not_called()
+        self.assertEqual(serial.calc_sent, bytes(range(81)))
+        for invalid in (-1, 1001):
+            with self.assertRaisesRegex(ValueError, "batch_pause_ms"):
+                UnoUsb(serial, batch_pause_ms=invalid)
 
     def test_optional_link_debug_counters(self):
         import contextlib
@@ -165,6 +192,54 @@ class StreamingTests(unittest.TestCase):
         fmt = StableRows()
         self.assertEqual(fmt.feed("CAFÉ\nX"), ["PC: CAFE".ljust(12)])
         self.assertEqual(fmt.finish(), ["X".ljust(12)])
+
+
+class WordWrapTests(unittest.TestCase):
+    def test_streaming_chunks_preserve_words_and_committed_rows(self):
+        wrapped = WordRows()
+        self.assertEqual(wrapped.feed("HEL"), [])
+        self.assertEqual(wrapped.feed("LO WOR"), [])
+        self.assertEqual(wrapped.feed("LD GOO"), ["PC: HELLO".ljust(12)])
+        self.assertEqual(wrapped.feed("DBYE "), ["WORLD".ljust(12)])
+        self.assertEqual(wrapped.finish(), ["GOODBYE".ljust(12)])
+        self.assertEqual(wrapped.finish(), [])
+
+    def test_full_width_ascii_word_no_overflow(self):
+        wrapped = WordRows()
+        rows = wrapped.feed("ABCDEFGHIJKLMNO")
+        rows += wrapped.finish()
+        self.assertEqual(rows, ["PC: ABCDEFGH", "IJKLMNO".ljust(12)])
+        self.assertTrue(all(len(row) == 12 for row in rows))
+
+    def test_unicode_newlines_and_original_default_unchanged(self):
+        wrapped = WordRows()
+        self.assertEqual(wrapped.feed("CAFÉ\nX"), ["PC: CAFE".ljust(12)])
+        self.assertEqual(wrapped.finish(), ["X".ljust(12)])
+        unwrapped = StableRows()
+        self.assertEqual(unwrapped.feed("HELLO WORLD"), ["PC: HELLO WO"])
+        self.assertEqual(unwrapped.finish(), ["RLD".ljust(12)])
+
+    def test_engine_saves_wrapped_rows_without_mutating_history(self):
+        from providers_v05 import DemoProvider
+        from bridge_v03 import db_connect
+        import time
+        db = db_connect(":memory:")
+        try:
+            engine = ConversationEngine(db, DemoProvider(), word_wrap=True)
+            engine.ask("HELLO", True)
+            deadline = time.monotonic() + 2
+            while engine.generating and time.monotonic() < deadline:
+                engine.drain()
+                time.sleep(0.002)
+            engine.drain()
+            self.assertFalse(engine.generating)
+            self.assertEqual(engine.word_wrap, True)
+            rows = [x[0] for x in db.execute("SELECT text FROM display_lines ORDER BY id")]
+            self.assertTrue(rows)
+            self.assertTrue(all(len(row) == 12 for row in rows))
+            self.assertIn("PC: WORLD", "".join(rows))
+        finally:
+            db.close()
 
 
 class EngineTests(unittest.TestCase):
