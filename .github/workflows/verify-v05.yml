@@ -2,19 +2,10 @@ name: Verify CHAT83 v0.5 integrated terminal
 on:
   push:
     branches: [main, feat/v05-integrated-terminal]
+  # Every PR must produce all required checks. In particular, a docs-only
+  # PR must NOT leave required branch-protection checks indefinitely Pending
+  # due to a paths filter. Keep the job IDs below stable for GitHub Rulesets.
   pull_request:
-    paths:
-      - "arduino/CHAT83_Uno_v05/**"
-      - "calculator/CHAT83_v05_chat.asm"
-      - "bridge/bridge_v05.py"
-      - "bridge/protocol_v05.py"
-      - "bridge/usb_v05.py"
-      - "bridge/providers_v05.py"
-      - "docs/v05-integrated-terminal.md"
-      - "windows/start-chat83-v05.ps1"
-      - "tests/**"
-      - "tools/**"
-      - ".github/workflows/verify-v05.yml"
 jobs:
   python:
     runs-on: ubuntu-latest
