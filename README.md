@@ -130,6 +130,7 @@ Use `--word-wrap` if you want Gemini's English text wrapped at word boundaries, 
 | [`windows/start-chat83-v05.ps1`](windows/start-chat83-v05.ps1) | Optional PowerShell launcher |
 | [`docs/releases/v0.6.0.md`](docs/releases/v0.6.0.md) | Release notes and known limitations |
 | [`docs/v05-wire-protocol.md`](docs/v05-wire-protocol.md) | Current TI Link / USB packet format (still v0.5-compatible) |
+| [§docs/hardware.md§](docs/hardware.md) | Verified D3/D6 wiring and differences between TiLP upload and chat firmware |
 | [`docs/v05-integrated-terminal.md`](docs/v05-integrated-terminal.md) | Hardware setup, detailed UI controls and debugging notes |
 | [`docs/development-log.md`](docs/development-log.md) | Earlier prototypes and engineering history |
 | [`tests/`](tests/) | Python integration, Z80 emulator and Uno Link mock tests |
